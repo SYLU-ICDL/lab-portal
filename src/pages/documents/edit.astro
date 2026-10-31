@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 ---
 
 <BaseLayout
@@ -11,7 +12,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 		<div class="container editor-topbar">
 			<a
 				id="back-to-reader"
-				href={`${import.meta.env.BASE_URL}documents`}
+				href={`${base}documents`}
 				class="back-link"
 			>
 				← 返回阅读
@@ -118,7 +119,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 		const AUTH_WORKER =
 			"https://sylu-icdl-auth.hugozhao6.workers.dev";
 
-		const base = import.meta.env.BASE_URL;
+		const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 
 		const loading =
 			document.querySelector<HTMLElement>("#editor-loading");

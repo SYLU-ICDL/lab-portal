@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
+const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 ---
 
 <BaseLayout
@@ -11,7 +12,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 		<div class="container reader-topbar">
 			<a
 				id="back-to-documents"
-				href={`${import.meta.env.BASE_URL}documents`}
+				href={`${base}documents`}
 				class="back-link"
 			>
 				← 返回共享文档
@@ -133,7 +134,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 		const backToDocuments =
 			document.querySelector<HTMLAnchorElement>("#back-to-documents");
 
-		const base = import.meta.env.BASE_URL;
+		const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 
 		function showOnly(
 			target: HTMLElement | null
