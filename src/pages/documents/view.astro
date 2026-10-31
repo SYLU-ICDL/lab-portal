@@ -135,6 +135,8 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			document.querySelector<HTMLAnchorElement>("#back-to-documents");
 
 		const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+		const attachmentObjectUrls = new Map<string, string>();
+		const attachmentFetches = new Map<string, Promise<string | null>>();
 
 		function showOnly(
 			target: HTMLElement | null
@@ -148,6 +150,80 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 					element.hidden = element !== target;
 				}
 			}
+		}
+
+		function resolveAttachmentRepositoryPath(src: string, documentPath: string) {
+			if (!src || !documentPath) return null;
+			if (/^(?:https?:|data:|blob:|\/\/)/i.test(src)) return null;
+
+			let clean = src.split("#")[0].split("?")[0];
+			try { clean = decodeURIComponent(clean); } catch {}
+			clean = clean.replace(/\\/g, "/");
+			if (!clean.includes("_attachments/")) return null;
+
+			const stack = documentPath.split("/").slice(0, -1);
+			for (const segment of clean.split("/")) {
+				if (!segment || segment === ".") continue;
+				if (segment === "..") {
+					if (stack.length > 1) stack.pop();
+					continue;
+				}
+				stack.push(segment);
+			}
+
+			const resolved = stack.join("/");
+			return resolved.includes("/_attachments/") ? resolved : null;
+		}
+
+		async function attachmentObjectUrl(repositoryPath: string) {
+			const cached = attachmentObjectUrls.get(repositoryPath);
+			if (cached) return cached;
+
+			const pending = attachmentFetches.get(repositoryPath);
+			if (pending) return pending;
+
+			const task = (async () => {
+				const session = getSessionToken();
+				if (!session) return null;
+
+				const url = new URL(`${AUTH_WORKER}/api/documents/attachment`);
+				url.searchParams.set("path", repositoryPath);
+
+				const response = await fetch(url.toString(), {
+					headers: { Authorization: `Bearer ${session}` },
+					cache: "no-store",
+				});
+
+				if (!response.ok) return null;
+				const blob = await response.blob();
+				const objectUrl = URL.createObjectURL(blob);
+				attachmentObjectUrls.set(repositoryPath, objectUrl);
+				return objectUrl;
+			})().finally(() => attachmentFetches.delete(repositoryPath));
+
+			attachmentFetches.set(repositoryPath, task);
+			return task;
+		}
+
+		async function hydrateProtectedImages(container: HTMLElement, documentPath: string) {
+			const images = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
+
+			await Promise.all(images.map(async (image) => {
+				const raw = image.getAttribute("src") || "";
+				const repositoryPath = resolveAttachmentRepositoryPath(raw, documentPath);
+				if (!repositoryPath) return;
+
+				image.classList.add("attachment-loading");
+				const objectUrl = await attachmentObjectUrl(repositoryPath);
+				image.classList.remove("attachment-loading");
+
+				if (objectUrl && image.isConnected) {
+					image.src = objectUrl;
+				} else if (image.isConnected) {
+					image.classList.add("attachment-load-error");
+					image.alt = image.alt || "图片暂时无法加载";
+				}
+			}));
 		}
 
 		function createTableOfContents() {
@@ -326,6 +402,8 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 								"noopener noreferrer";
 						}
 					}
+
+					await hydrateProtectedImages(content, data.path);
 				}
 
 				createTableOfContents();
@@ -341,6 +419,12 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 				showOnly(errorBox);
 			}
 		}
+
+		window.addEventListener("beforeunload", () => {
+			for (const objectUrl of attachmentObjectUrls.values()) {
+				URL.revokeObjectURL(objectUrl);
+			}
+		});
 
 		loadDocument();
 	</script>
@@ -643,6 +727,15 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			margin: 36px 0;
 			border: 0;
 			background: #e8ecf1;
+		}
+
+		.markdown-body img.attachment-loading {
+			opacity: .45;
+		}
+
+		.markdown-body img.attachment-load-error {
+			opacity: .35;
+			filter: grayscale(1);
 		}
 
 		.markdown-body img {

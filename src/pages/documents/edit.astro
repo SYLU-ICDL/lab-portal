@@ -82,6 +82,14 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 				<section class="editor-pane">
 					<div class="pane-title">正文</div>
 
+					<div class="attachment-paste-hint">
+						<div>
+							<strong>支持直接粘贴图片</strong>
+							<span>复制截图或图片后，在正文中按 Ctrl + V 即可插入。</span>
+						</div>
+						<span id="attachment-upload-state" class="attachment-upload-state"></span>
+					</div>
+
 					<textarea
 						id="markdown-editor"
 						class="markdown-editor"
@@ -171,6 +179,8 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			document.querySelector<HTMLElement>("#save-message");
 		const backLink =
 			document.querySelector<HTMLAnchorElement>("#back-to-reader");
+		const attachmentUploadState =
+			document.querySelector<HTMLElement>("#attachment-upload-state");
 
 		const saveDialog =
 			document.querySelector<HTMLDialogElement>("#save-dialog");
@@ -188,6 +198,9 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 		let sha = "";
 		let originalMarkdown = "";
 		let saving = false;
+		let uploadingAttachment = false;
+		const attachmentObjectUrls = new Map<string, string>();
+		const attachmentFetches = new Map<string, Promise<string | null>>();
 
 		marked.setOptions({
 			gfm: true,
@@ -200,6 +213,80 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			}
 		}
 
+		function resolveAttachmentRepositoryPath(src: string, documentPath: string) {
+			if (!src || !documentPath) return null;
+			if (/^(?:https?:|data:|blob:|\/\/)/i.test(src)) return null;
+
+			let clean = src.split("#")[0].split("?")[0];
+			try { clean = decodeURIComponent(clean); } catch {}
+			clean = clean.replace(/\\/g, "/");
+			if (!clean.includes("_attachments/")) return null;
+
+			const stack = documentPath.split("/").slice(0, -1);
+			for (const segment of clean.split("/")) {
+				if (!segment || segment === ".") continue;
+				if (segment === "..") {
+					if (stack.length > 1) stack.pop();
+					continue;
+				}
+				stack.push(segment);
+			}
+
+			const resolved = stack.join("/");
+			return resolved.includes("/_attachments/") ? resolved : null;
+		}
+
+		async function attachmentObjectUrl(repositoryPath: string) {
+			const cached = attachmentObjectUrls.get(repositoryPath);
+			if (cached) return cached;
+
+			const pending = attachmentFetches.get(repositoryPath);
+			if (pending) return pending;
+
+			const task = (async () => {
+				const session = getSessionToken();
+				if (!session) return null;
+
+				const url = new URL(`${AUTH_WORKER}/api/documents/attachment`);
+				url.searchParams.set("path", repositoryPath);
+
+				const response = await fetch(url.toString(), {
+					headers: { Authorization: `Bearer ${session}` },
+					cache: "no-store",
+				});
+
+				if (!response.ok) return null;
+				const blob = await response.blob();
+				const objectUrl = URL.createObjectURL(blob);
+				attachmentObjectUrls.set(repositoryPath, objectUrl);
+				return objectUrl;
+			})().finally(() => attachmentFetches.delete(repositoryPath));
+
+			attachmentFetches.set(repositoryPath, task);
+			return task;
+		}
+
+		async function hydrateProtectedImages(container: HTMLElement, documentPath: string) {
+			const images = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
+
+			await Promise.all(images.map(async (image) => {
+				const raw = image.getAttribute("src") || "";
+				const repositoryPath = resolveAttachmentRepositoryPath(raw, documentPath);
+				if (!repositoryPath) return;
+
+				image.classList.add("attachment-loading");
+				const objectUrl = await attachmentObjectUrl(repositoryPath);
+				image.classList.remove("attachment-loading");
+
+				if (objectUrl && image.isConnected) {
+					image.src = objectUrl;
+				} else if (image.isConnected) {
+					image.classList.add("attachment-load-error");
+					image.alt = image.alt || "图片暂时无法加载";
+				}
+			}));
+		}
+
 		function render(markdown: string) {
 			if (!preview) return;
 
@@ -209,6 +296,8 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 				html as string,
 				{ USE_PROFILES: { html: true } }
 			);
+
+			void hydrateProtectedImages(preview, path);
 		}
 
 		function setMessage(
@@ -424,6 +513,123 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			}
 		}
 
+		function setAttachmentState(message: string, type: "normal" | "error" = "normal") {
+			if (!attachmentUploadState) return;
+			attachmentUploadState.textContent = message;
+			attachmentUploadState.classList.toggle("is-error", type === "error");
+		}
+
+		function fileToBase64(file: File) {
+			return new Promise<string>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => {
+					const value = String(reader.result || "");
+					const comma = value.indexOf(",");
+					if (comma < 0) reject(new Error("无法读取图片内容。"));
+					else resolve(value.slice(comma + 1));
+				};
+				reader.onerror = () => reject(new Error("无法读取图片内容。"));
+				reader.readAsDataURL(file);
+			});
+		}
+
+		function insertMarkdownAtCursor(markdown: string) {
+			if (!editor) return;
+			const start = editor.selectionStart ?? editor.value.length;
+			const end = editor.selectionEnd ?? start;
+			const before = editor.value.slice(0, start);
+			const after = editor.value.slice(end);
+			const prefix = before && !before.endsWith("\n") ? "\n" : "";
+			const suffix = after && !after.startsWith("\n") ? "\n" : "";
+			const insertion = `${prefix}${markdown}${suffix}`;
+
+			editor.value = before + insertion + after;
+			const next = before.length + insertion.length;
+			editor.selectionStart = next;
+			editor.selectionEnd = next;
+			editor.dispatchEvent(new Event("input", { bubbles: true }));
+		}
+
+		async function uploadPastedImage(file: File) {
+			const session = getSessionToken();
+			if (!session) throw new Error("登录状态已失效，请重新登录。");
+
+			const supported = new Set([
+				"image/png",
+				"image/jpeg",
+				"image/webp",
+				"image/gif",
+			]);
+
+			if (!supported.has(file.type)) {
+				throw new Error("暂时支持 PNG、JPG、WebP 和 GIF 图片。");
+			}
+
+			if (file.size > 5 * 1024 * 1024) {
+				throw new Error("单张图片不能超过 5 MB。");
+			}
+
+			const base64 = await fileToBase64(file);
+			const response = await fetch(`${AUTH_WORKER}/api/documents/attachments`, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${session}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					documentPath: path,
+					mimeType: file.type,
+					base64,
+				}),
+			});
+
+			if (response.status === 401) {
+				clearSession();
+				window.location.reload();
+				throw new Error("登录状态已失效。");
+			}
+
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.message || "图片上传失败。");
+			}
+
+			return data;
+		}
+
+		editor?.addEventListener("paste", async (event) => {
+			const files = Array.from(event.clipboardData?.items || [])
+				.filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+				.map((item) => item.getAsFile())
+				.filter((file): file is File => Boolean(file));
+
+			if (files.length === 0) return;
+			event.preventDefault();
+
+			if (uploadingAttachment || !editor) return;
+			uploadingAttachment = true;
+			editor.readOnly = true;
+			clearMessage();
+
+			try {
+				for (let index = 0; index < files.length; index++) {
+					setAttachmentState(`正在上传图片 ${index + 1}/${files.length}…`);
+					const data = await uploadPastedImage(files[index]);
+					insertMarkdownAtCursor(`![图片](${data.relativePath})`);
+				}
+				setAttachmentState(files.length > 1 ? `已插入 ${files.length} 张图片` : "图片已插入");
+			} catch (error) {
+				console.error(error);
+				const message = error instanceof Error ? error.message : "图片上传失败。";
+				setAttachmentState(message, "error");
+				setMessage(message, "error");
+			} finally {
+				uploadingAttachment = false;
+				editor.readOnly = false;
+				editor.focus();
+			}
+		});
+
 		editor?.addEventListener("input", () => {
 			render(editor.value);
 
@@ -452,6 +658,12 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			window.location.href =
 				`${base}documents/view?path=` +
 				encodeURIComponent(path);
+		});
+
+		window.addEventListener("beforeunload", () => {
+			for (const objectUrl of attachmentObjectUrls.values()) {
+				URL.revokeObjectURL(objectUrl);
+			}
 		});
 
 		load();
@@ -584,6 +796,52 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			color: #7b8799;
 			font-size: 12px;
 			font-weight: 800;
+		}
+
+		.attachment-paste-hint {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 16px;
+			margin: 0 0 10px;
+			padding: 10px 12px;
+			border: 1px solid #e3e8f0;
+			border-radius: 10px;
+			background: #f8faff;
+			color: #69768a;
+			font-size: 11px;
+			line-height: 1.55;
+		}
+
+		.attachment-paste-hint > div {
+			display: flex;
+			min-width: 0;
+			flex-direction: column;
+			gap: 2px;
+		}
+
+		.attachment-paste-hint strong {
+			color: #44536a;
+			font-size: 12px;
+		}
+
+		.attachment-upload-state {
+			flex: 0 0 auto;
+			color: #4c6fd5;
+			font-weight: 750;
+		}
+
+		.attachment-upload-state.is-error {
+			color: #b44747;
+		}
+
+		.markdown-body img.attachment-loading {
+			opacity: .45;
+		}
+
+		.markdown-body img.attachment-load-error {
+			opacity: .35;
+			filter: grayscale(1);
 		}
 
 		.markdown-editor {
