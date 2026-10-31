@@ -143,10 +143,40 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         rows="9"
         placeholder="# 文档标题\n\n在这里编写 Markdown 内容。"
       ></textarea>
+      <label for="document-summary-input">新增说明（可选）</label>
+      <input
+        id="document-summary-input"
+        name="summary"
+        type="text"
+        maxlength="120"
+        placeholder="例如：新增实验记录模板"
+      />
       <div id="document-dialog-error" class="dialog-error" hidden></div>
       <div class="dialog-actions">
         <button type="button" class="dialog-cancel" data-close-dialog="document-dialog">取消</button>
         <button id="create-document-submit" type="submit" class="primary-action">创建文档</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="delete-document-dialog" class="management-dialog">
+    <form id="delete-document-form" class="dialog-form">
+      <div class="dialog-kicker">共享文档</div>
+      <h2>删除文档</h2>
+      <p class="dialog-description">
+        确认删除 <strong id="delete-document-name">当前文档</strong>。删除后该文档将从共享文档中移除。
+      </p>
+      <label for="delete-document-summary">删除说明（可选）</label>
+      <textarea
+        id="delete-document-summary"
+        rows="4"
+        maxlength="120"
+        placeholder="例如：内容已失效，由新版文档替代"
+      ></textarea>
+      <div id="delete-document-dialog-error" class="dialog-error" hidden></div>
+      <div class="dialog-actions">
+        <button type="button" class="dialog-cancel" data-close-dialog="delete-document-dialog">取消</button>
+        <button id="delete-document-submit" type="submit" class="danger-confirm-action">确认删除</button>
       </div>
     </form>
   </dialog>
@@ -211,15 +241,24 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     const documentForm = document.querySelector<HTMLFormElement>("#document-form");
     const documentNameInput = document.querySelector<HTMLInputElement>("#document-name-input");
     const documentMarkdownInput = document.querySelector<HTMLTextAreaElement>("#document-markdown-input");
+    const documentSummaryInput = document.querySelector<HTMLInputElement>("#document-summary-input");
     const documentDialogError = document.querySelector<HTMLElement>("#document-dialog-error");
     const createDocumentSubmit = document.querySelector<HTMLButtonElement>("#create-document-submit");
     const newDocumentTarget = document.querySelector<HTMLElement>("#new-document-target");
+
+    const deleteDocumentDialog = document.querySelector<HTMLDialogElement>("#delete-document-dialog");
+    const deleteDocumentForm = document.querySelector<HTMLFormElement>("#delete-document-form");
+    const deleteDocumentName = document.querySelector<HTMLElement>("#delete-document-name");
+    const deleteDocumentSummary = document.querySelector<HTMLTextAreaElement>("#delete-document-summary");
+    const deleteDocumentDialogError = document.querySelector<HTMLElement>("#delete-document-dialog-error");
+    const deleteDocumentSubmit = document.querySelector<HTMLButtonElement>("#delete-document-submit");
 
     const themes = ["blue", "green", "orange", "purple", "cyan", "rose", "indigo", "amber"];
     let currentCategory: string | null = null;
     let currentIsUncategorized = false;
     let busy = false;
     let canEditDocuments = false;
+    let pendingDeleteItem: DocumentItem | null = null;
 
     function hashValue(value: string) {
       let hash = 0;
@@ -499,27 +538,51 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       button.textContent = busy ? busyText : idleText;
     }
 
-    async function deleteDocument(item: DocumentItem) {
-      const confirmed = window.confirm(
-        `确定删除文档“${item.name}”吗？\n\n删除后无法通过网站恢复。`
-      );
-      if (!confirmed) return;
+    function deleteDocument(item: DocumentItem) {
+      pendingDeleteItem = item;
+      if (deleteDocumentName) deleteDocumentName.textContent = `“${item.name}”`;
+      if (deleteDocumentSummary) deleteDocumentSummary.value = "";
+      if (deleteDocumentDialogError) deleteDocumentDialogError.hidden = true;
+      deleteDocumentDialog?.showModal();
+      deleteDocumentSummary?.focus();
+    }
+
+    deleteDocumentForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!pendingDeleteItem || busy) return;
+
+      busy = true;
+      if (deleteDocumentDialogError) deleteDocumentDialogError.hidden = true;
+      setButtonBusy(deleteDocumentSubmit, true, "确认删除", "正在删除…");
 
       try {
         await apiRequest("/api/documents/content", {
           method: "DELETE",
-          body: JSON.stringify({ path: item.path, sha: item.sha }),
+          body: JSON.stringify({
+            path: pendingDeleteItem.path,
+            sha: pendingDeleteItem.sha,
+            summary: deleteDocumentSummary?.value.trim() || "",
+          }),
         });
+
+        deleteDocumentDialog?.close();
+        pendingDeleteItem = null;
         await loadCategory();
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : "删除文档失败。");
+        showDialogError(
+          deleteDocumentDialogError,
+          error instanceof Error ? error.message : "删除文档失败。"
+        );
+      } finally {
+        busy = false;
+        setButtonBusy(deleteDocumentSubmit, false, "确认删除", "正在删除…");
       }
-    }
+    });
 
     async function deleteCurrentCategory() {
       if (!currentCategory || currentIsUncategorized) return;
       const confirmed = window.confirm(
-        `确定删除分类“${currentCategory}”及其中的全部文档吗？\n\n删除后无法通过网站恢复。`
+        `确定删除空分类“${currentCategory}”吗？\n\n为避免误操作，分类中仍有文档或待审核记录时，系统会阻止删除。`
       );
       if (!confirmed) return;
 
@@ -622,6 +685,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             category: currentIsUncategorized ? null : currentCategory,
             name,
             markdown,
+            summary: documentSummaryInput?.value.trim() || "",
           }),
         });
         documentDialog?.close();
@@ -639,6 +703,10 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         const id = button.dataset.closeDialog;
         if (id === "category-dialog") categoryDialog?.close();
         if (id === "document-dialog") documentDialog?.close();
+        if (id === "delete-document-dialog") {
+          pendingDeleteItem = null;
+          deleteDocumentDialog?.close();
+        }
       });
     });
 
@@ -817,6 +885,19 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     .dialog-error { padding: 10px 12px; border: 1px solid #f1caca; border-radius: 8px; background: #fff5f5; color: #ad4040; font-size: 12px; line-height: 1.6; }
     .dialog-error[hidden] { display: none; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 10px; }
+    .danger-confirm-action {
+      min-height: 40px;
+      padding: 0 15px;
+      border: 1px solid #cc5b5b;
+      border-radius: 9px;
+      background: #c84d4d;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .danger-confirm-action:disabled { opacity: .6; cursor: wait; }
     .document-dialog { width: min(680px,calc(100vw - 32px)); max-width: 680px; }
 
     @media (max-width: 850px) {

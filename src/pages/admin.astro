@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 ---
 
 <BaseLayout title="管理 | SYLU-ICDL" protectedPage={true} requiredRole="admin">
@@ -10,7 +11,10 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         <h1>成员与权限</h1>
         <p>预注册新成员，并维护已验证账号的姓名与权限。</p>
       </div>
-      <button id="refresh-admin" class="admin-secondary-button" type="button">刷新</button>
+      <div class="admin-heading-actions">
+        <a class="admin-review-link" href={`${base}admin/documents`}>文档审核</a>
+        <button id="refresh-admin" class="admin-secondary-button" type="button">刷新</button>
+      </div>
     </section>
 
     <section class="admin-summary">
@@ -579,6 +583,26 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
     .admin-heading h1 { margin: 5px 0 7px; font-size: 34px; }
     .admin-heading p { margin: 0; color: #78859a; }
+
+    .admin-heading-actions {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .admin-review-link {
+      display: inline-flex;
+      min-height: 40px;
+      align-items: center;
+      padding: 0 16px;
+      border: 1px solid #2563eb;
+      border-radius: 9px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      text-decoration: none;
+    }
 
     .admin-secondary-button,
     .admin-primary-button {

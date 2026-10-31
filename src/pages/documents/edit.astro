@@ -73,7 +73,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 						type="button"
 						class="primary-button"
 					>
-						保存到 GitHub
+						保存
 					</button>
 				</div>
 			</header>
@@ -106,6 +106,29 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			></div>
 		</section>
 	</main>
+
+	<dialog id="save-dialog" class="save-dialog">
+		<form id="save-form" class="save-dialog-form">
+			<div class="editor-kicker">保存文档</div>
+			<h2>确认保存</h2>
+			<p>可以填写本次修改的简要说明，留空也可以直接保存。</p>
+
+			<label for="save-summary">
+				<span>修改说明（可选）</span>
+				<textarea
+					id="save-summary"
+					rows="4"
+					maxlength="120"
+					placeholder="例如：补充实验步骤与注意事项"
+				></textarea>
+			</label>
+
+			<div class="save-dialog-actions">
+				<button id="save-dialog-cancel" type="button" class="secondary-button">取消</button>
+				<button id="save-dialog-submit" type="submit" class="primary-button">保存</button>
+			</div>
+		</form>
+	</dialog>
 
 	<script>
 		import { marked } from "marked";
@@ -148,6 +171,17 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			document.querySelector<HTMLElement>("#save-message");
 		const backLink =
 			document.querySelector<HTMLAnchorElement>("#back-to-reader");
+
+		const saveDialog =
+			document.querySelector<HTMLDialogElement>("#save-dialog");
+		const saveForm =
+			document.querySelector<HTMLFormElement>("#save-form");
+		const saveSummary =
+			document.querySelector<HTMLTextAreaElement>("#save-summary");
+		const saveDialogCancel =
+			document.querySelector<HTMLButtonElement>("#save-dialog-cancel");
+		const saveDialogSubmit =
+			document.querySelector<HTMLButtonElement>("#save-dialog-submit");
 
 		let path = "";
 		let name = "";
@@ -276,7 +310,20 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			}
 		}
 
-		async function save() {
+		function openSaveDialog() {
+			if (!editor || saving) return;
+
+			if (editor.value === originalMarkdown) {
+				setMessage("正文没有变化，无需保存。", "success");
+				return;
+			}
+
+			if (saveSummary) saveSummary.value = "";
+			saveDialog?.showModal();
+			saveSummary?.focus();
+		}
+
+		async function save(summary: string) {
 			if (!editor || saving) return;
 
 			const session = getSessionToken();
@@ -293,6 +340,11 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			if (saveButton) {
 				saveButton.disabled = true;
 				saveButton.textContent = "正在保存…";
+			}
+
+			if (saveDialogSubmit) {
+				saveDialogSubmit.disabled = true;
+				saveDialogSubmit.textContent = "正在保存…";
 			}
 
 			if (saveState) {
@@ -312,8 +364,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 							path,
 							markdown: editor.value,
 							sha,
-							message:
-								`Update ${name} via SYLU-ICDL Portal`,
+							summary,
 						}),
 					}
 				);
@@ -327,10 +378,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 				const data = await response.json();
 
 				if (!response.ok) {
-					setMessage(
-						data.message || "保存失败。",
-						"error"
-					);
+					setMessage(data.message || "保存失败。", "error");
 
 					if (saveState) {
 						saveState.textContent = "保存失败";
@@ -348,10 +396,8 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 					saveState.textContent = "已保存";
 				}
 
-				setMessage(
-					"保存成功。",
-					"success"
-				);
+				setMessage("保存成功。", "success");
+				saveDialog?.close();
 			} catch (error) {
 				console.error(error);
 
@@ -368,7 +414,12 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 
 				if (saveButton) {
 					saveButton.disabled = false;
-					saveButton.textContent = "保存到 GitHub";
+					saveButton.textContent = "保存";
+				}
+
+				if (saveDialogSubmit) {
+					saveDialogSubmit.disabled = false;
+					saveDialogSubmit.textContent = "保存";
 				}
 			}
 		}
@@ -386,7 +437,16 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			clearMessage();
 		});
 
-		saveButton?.addEventListener("click", save);
+		saveButton?.addEventListener("click", openSaveDialog);
+
+		saveForm?.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			await save(saveSummary?.value.trim() || "");
+		});
+
+		saveDialogCancel?.addEventListener("click", () => {
+			saveDialog?.close();
+		});
 
 		cancelButton?.addEventListener("click", () => {
 			window.location.href =
@@ -696,6 +756,105 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			.editor-actions button {
 				flex: 1;
 			}
+		}
+		.save-dialog {
+			position: fixed;
+			inset: 0;
+			margin: auto;
+			width: min(520px, calc(100vw - 28px));
+			max-height: calc(100vh - 40px);
+			padding: 0;
+			overflow: auto;
+			border: 1px solid #e0e6ef;
+			border-radius: 16px;
+			background: #fff;
+			box-shadow: 0 25px 80px rgba(18, 31, 55, .2);
+		}
+
+		.save-dialog::backdrop {
+			background: rgba(21, 32, 52, .43);
+			backdrop-filter: blur(3px);
+		}
+
+		.save-dialog-form {
+			display: flex;
+			flex-direction: column;
+			gap: 13px;
+			padding: 25px;
+		}
+
+		.save-dialog-form h2 {
+			margin: 0;
+			color: #172033;
+		}
+
+		.save-dialog-form p {
+			margin: 0;
+			color: #778397;
+			font-size: 12px;
+			line-height: 1.7;
+		}
+
+		.save-dialog-form label {
+			display: flex;
+			flex-direction: column;
+			gap: 7px;
+		}
+
+		.save-dialog-form label > span {
+			color: #536078;
+			font-size: 12px;
+			font-weight: 750;
+		}
+
+		.save-dialog-form textarea {
+			min-height: 100px;
+			padding: 11px 12px;
+			resize: vertical;
+			border: 1px solid #dce3ec;
+			border-radius: 9px;
+			outline: none;
+			background: #fbfcfe;
+			font: inherit;
+			font-size: 13px;
+			line-height: 1.6;
+		}
+
+		.save-dialog-form textarea:focus {
+			border-color: #8ba8ef;
+			box-shadow: 0 0 0 3px rgba(65, 105, 225, .08);
+		}
+
+		.save-dialog-actions {
+			display: flex;
+			justify-content: flex-end;
+			gap: 8px;
+			margin-top: 3px;
+		}
+
+		.save-dialog-actions button {
+			min-height: 40px;
+			padding: 0 15px;
+			border-radius: 9px;
+			cursor: pointer;
+			font-weight: 800;
+		}
+
+		.save-dialog-actions .secondary-button {
+			border: 1px solid #dce3ec;
+			background: #fff;
+			color: #445168;
+		}
+
+		.save-dialog-actions .primary-button {
+			border: 1px solid #2563eb;
+			background: #2563eb;
+			color: #fff;
+		}
+
+		.save-dialog-actions button:disabled {
+			opacity: .6;
+			cursor: wait;
 		}
 	</style>
 </BaseLayout>

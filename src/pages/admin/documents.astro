@@ -1,0 +1,727 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+
+<BaseLayout title="文档审核 | SYLU-ICDL" protectedPage={true} requiredRole="admin">
+  <main class="container review-page">
+    <section class="review-heading">
+      <div>
+        <a class="review-back-link" href={`${base}admin`}>← 返回管理</a>
+        <div class="review-kicker">平台管理</div>
+        <h1>文档审核</h1>
+        <p>审核成员提交的文档删除操作。</p>
+      </div>
+      <button id="refresh-reviews" class="review-secondary-button" type="button">刷新</button>
+    </section>
+
+    <section class="review-summary">
+      <article>
+        <span>待审核</span>
+        <strong id="review-count">—</strong>
+      </article>
+    </section>
+
+    <section class="review-panel">
+      <div id="review-loading" class="review-state">
+        <div class="review-spinner"></div>
+        <p>正在加载审核记录…</p>
+      </div>
+
+      <div id="review-error" class="review-state review-error" hidden>
+        <strong>暂时无法加载审核记录</strong>
+        <p id="review-error-message">请稍后重试。</p>
+      </div>
+
+      <div id="review-empty" class="review-state" hidden>
+        <div class="review-empty-mark">✓</div>
+        <strong>暂无待审核文档</strong>
+        <p>当前没有需要处理的删除记录。</p>
+      </div>
+
+      <div id="review-list" class="review-list" hidden></div>
+    </section>
+  </main>
+
+  <dialog id="review-action-dialog" class="review-dialog">
+    <form id="review-action-form" class="review-dialog-form">
+      <div class="dialog-kicker">文档审核</div>
+      <h2 id="review-action-title">处理文档</h2>
+
+      <div class="review-file-card">
+        <strong id="review-action-name">文档</strong>
+        <span id="review-action-category">分类</span>
+      </div>
+
+      <p id="review-action-description" class="review-dialog-description"></p>
+
+      <label for="review-action-summary">
+        <span>审核说明（可选）</span>
+        <textarea
+          id="review-action-summary"
+          rows="4"
+          maxlength="120"
+          placeholder="例如：确认该文件已无保留必要"
+        ></textarea>
+      </label>
+
+      <div id="review-action-error" class="review-dialog-error" hidden></div>
+
+      <div class="review-dialog-actions">
+        <button id="review-action-cancel" type="button" class="review-dialog-cancel">取消</button>
+        <button id="review-action-submit" type="submit" class="review-primary-button">确认</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="review-preview-dialog" class="review-dialog review-preview-dialog">
+    <div class="review-preview-shell">
+      <div class="review-preview-header">
+        <div>
+          <div class="dialog-kicker">待审核文档</div>
+          <h2 id="review-preview-title">文档预览</h2>
+        </div>
+        <button id="review-preview-close" type="button" class="review-dialog-cancel">关闭</button>
+      </div>
+      <pre id="review-preview-content" class="review-preview-content"></pre>
+    </div>
+  </dialog>
+
+  <script>
+    import { getSessionToken } from "../../lib/auth";
+
+    const AUTH_WORKER = "https://sylu-icdl-auth.hugozhao6.workers.dev";
+
+    type ReviewItem = {
+      id: number;
+      original_path: string;
+      deleted_path: string;
+      original_name: string;
+      category?: string | null;
+      deleted_by_github_id: number;
+      deleted_by_login: string;
+      deleted_by_name: string;
+      delete_summary?: string | null;
+      deleted_at: string;
+      status: string;
+      delete_commit_sha?: string | null;
+    };
+
+    const loading = document.querySelector<HTMLElement>("#review-loading");
+    const errorBox = document.querySelector<HTMLElement>("#review-error");
+    const errorMessage = document.querySelector<HTMLElement>("#review-error-message");
+    const emptyBox = document.querySelector<HTMLElement>("#review-empty");
+    const list = document.querySelector<HTMLElement>("#review-list");
+    const count = document.querySelector<HTMLElement>("#review-count");
+    const refreshButton = document.querySelector<HTMLButtonElement>("#refresh-reviews");
+
+    const actionDialog = document.querySelector<HTMLDialogElement>("#review-action-dialog");
+    const actionForm = document.querySelector<HTMLFormElement>("#review-action-form");
+    const actionTitle = document.querySelector<HTMLElement>("#review-action-title");
+    const actionName = document.querySelector<HTMLElement>("#review-action-name");
+    const actionCategory = document.querySelector<HTMLElement>("#review-action-category");
+    const actionDescription = document.querySelector<HTMLElement>("#review-action-description");
+    const actionSummary = document.querySelector<HTMLTextAreaElement>("#review-action-summary");
+    const actionError = document.querySelector<HTMLElement>("#review-action-error");
+    const actionCancel = document.querySelector<HTMLButtonElement>("#review-action-cancel");
+    const actionSubmit = document.querySelector<HTMLButtonElement>("#review-action-submit");
+
+    const previewDialog = document.querySelector<HTMLDialogElement>("#review-preview-dialog");
+    const previewTitle = document.querySelector<HTMLElement>("#review-preview-title");
+    const previewContent = document.querySelector<HTMLElement>("#review-preview-content");
+    const previewClose = document.querySelector<HTMLButtonElement>("#review-preview-close");
+
+    let reviews: ReviewItem[] = [];
+    let activeReview: ReviewItem | null = null;
+    let activeMode: "restore" | "confirm" = "restore";
+    let submitting = false;
+
+    async function api(path: string, init: RequestInit = {}) {
+      const session = getSessionToken();
+      if (!session) throw new Error("登录状态已失效，请重新登录。");
+
+      const response = await fetch(`${AUTH_WORKER}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${session}`,
+          "Content-Type": "application/json",
+          ...(init.headers || {}),
+        },
+      });
+
+      let data: any = {};
+      try {
+        data = await response.json();
+      } catch {}
+
+      if (!response.ok) {
+        throw new Error(data.message || "请求失败，请稍后重试。");
+      }
+      return data;
+    }
+
+    function showOnly(target: HTMLElement | null) {
+      for (const element of [loading, errorBox, emptyBox, list]) {
+        if (element) element.hidden = element !== target;
+      }
+    }
+
+    function formatTime(value: string) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value || "—";
+      return new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(date);
+    }
+
+    function categoryLabel(item: ReviewItem) {
+      return item.category || "未分类";
+    }
+
+    function render() {
+      if (!list) return;
+      list.replaceChildren();
+      if (count) count.textContent = String(reviews.length);
+
+      if (reviews.length === 0) {
+        showOnly(emptyBox);
+        return;
+      }
+
+      reviews.forEach((item) => {
+        const row = document.createElement("article");
+        row.className = "review-row";
+
+        const main = document.createElement("div");
+        main.className = "review-row-main";
+
+        const title = document.createElement("strong");
+        title.textContent = item.original_name;
+
+        const meta = document.createElement("div");
+        meta.className = "review-row-meta";
+
+        const category = document.createElement("span");
+        category.textContent = categoryLabel(item);
+
+        const actor = document.createElement("span");
+        actor.textContent = `${item.deleted_by_name} 提交删除`;
+
+        const time = document.createElement("span");
+        time.textContent = formatTime(item.deleted_at);
+
+        meta.append(category, actor, time);
+        main.append(title, meta);
+
+        if (item.delete_summary) {
+          const summary = document.createElement("p");
+          summary.className = "review-row-summary";
+          summary.textContent = item.delete_summary;
+          main.append(summary);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "review-row-actions";
+
+        const preview = document.createElement("button");
+        preview.type = "button";
+        preview.className = "review-secondary-button";
+        preview.textContent = "查看";
+        preview.addEventListener("click", () => previewReview(item));
+
+        const restore = document.createElement("button");
+        restore.type = "button";
+        restore.className = "review-secondary-button";
+        restore.textContent = "恢复";
+        restore.addEventListener("click", () => openAction(item, "restore"));
+
+        const confirm = document.createElement("button");
+        confirm.type = "button";
+        confirm.className = "review-danger-button";
+        confirm.textContent = "确认删除";
+        confirm.addEventListener("click", () => openAction(item, "confirm"));
+
+        actions.append(preview, restore, confirm);
+        row.append(main, actions);
+        list.append(row);
+      });
+
+      showOnly(list);
+    }
+
+    async function load() {
+      showOnly(loading);
+      try {
+        const data = await api("/api/admin/document-reviews");
+        reviews = Array.isArray(data.reviews) ? data.reviews : [];
+        render();
+      } catch (error) {
+        if (errorMessage) {
+          errorMessage.textContent =
+            error instanceof Error ? error.message : "暂时无法加载审核记录。";
+        }
+        showOnly(errorBox);
+      }
+    }
+
+    async function previewReview(item: ReviewItem) {
+      try {
+        const data = await api(`/api/admin/document-reviews/content?id=${encodeURIComponent(item.id)}`);
+        if (previewTitle) previewTitle.textContent = data.name || item.original_name;
+        if (previewContent) previewContent.textContent = data.markdown || "";
+        previewDialog?.showModal();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "暂时无法预览文档。");
+      }
+    }
+
+    function openAction(item: ReviewItem, mode: "restore" | "confirm") {
+      activeReview = item;
+      activeMode = mode;
+      if (actionError) actionError.hidden = true;
+      if (actionSummary) actionSummary.value = "";
+      if (actionName) actionName.textContent = item.original_name;
+      if (actionCategory) actionCategory.textContent = categoryLabel(item);
+
+      if (mode === "restore") {
+        if (actionTitle) actionTitle.textContent = "恢复文档";
+        if (actionDescription) {
+          actionDescription.textContent =
+            "恢复后文档将重新出现在共享文档中。若原名称已被新文档占用，新文档会自动调整名称。";
+        }
+        if (actionSubmit) {
+          actionSubmit.textContent = "确认恢复";
+          actionSubmit.className = "review-primary-button";
+        }
+      } else {
+        if (actionTitle) actionTitle.textContent = "确认删除";
+        if (actionDescription) {
+          actionDescription.textContent =
+            "确认后该文档会被正式删除。此操作不可通过网站恢复。";
+        }
+        if (actionSubmit) {
+          actionSubmit.textContent = "确认删除";
+          actionSubmit.className = "review-danger-button";
+        }
+      }
+
+      actionDialog?.showModal();
+      actionSummary?.focus();
+    }
+
+    actionForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!activeReview || submitting) return;
+
+      submitting = true;
+      if (actionError) actionError.hidden = true;
+      if (actionSubmit) actionSubmit.disabled = true;
+
+      try {
+        const endpoint =
+          activeMode === "restore"
+            ? "/api/admin/document-reviews/restore"
+            : "/api/admin/document-reviews/confirm";
+
+        const data = await api(endpoint, {
+          method: "POST",
+          body: JSON.stringify({
+            id: activeReview.id,
+            summary: actionSummary?.value.trim() || "",
+          }),
+        });
+
+        actionDialog?.close();
+
+        if (activeMode === "restore" && data.renamedConflictingPath) {
+          alert("文档已恢复。同名的新文档已自动调整名称。");
+        }
+
+        activeReview = null;
+        await load();
+      } catch (error) {
+        if (actionError) {
+          actionError.hidden = false;
+          actionError.textContent =
+            error instanceof Error ? error.message : "审核操作失败。";
+        }
+      } finally {
+        submitting = false;
+        if (actionSubmit) actionSubmit.disabled = false;
+      }
+    });
+
+    actionCancel?.addEventListener("click", () => {
+      activeReview = null;
+      actionDialog?.close();
+    });
+
+    previewClose?.addEventListener("click", () => previewDialog?.close());
+    refreshButton?.addEventListener("click", load);
+
+    load();
+  </script>
+
+  <style is:global>
+    .review-page {
+      padding: 50px 0 80px;
+    }
+
+    .review-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 20px;
+    }
+
+    .review-back-link {
+      display: inline-flex;
+      margin-bottom: 18px;
+      color: #66758a;
+      font-size: 12px;
+      font-weight: 750;
+      text-decoration: none;
+    }
+
+    .review-kicker,
+    .dialog-kicker {
+      color: #2563eb;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .review-heading h1 {
+      margin: 5px 0 7px;
+      color: #172033;
+      font-size: 34px;
+    }
+
+    .review-heading p {
+      margin: 0;
+      color: #78859a;
+    }
+
+    .review-summary {
+      display: grid;
+      grid-template-columns: minmax(180px, 260px);
+      margin-bottom: 16px;
+    }
+
+    .review-summary article {
+      padding: 17px 20px;
+      border: 1px solid #e2e7ee;
+      border-radius: 14px;
+      background: #fff;
+    }
+
+    .review-summary span {
+      display: block;
+      color: #8a95a6;
+      font-size: 12px;
+    }
+
+    .review-summary strong {
+      display: block;
+      margin-top: 4px;
+      color: #172033;
+      font-size: 28px;
+    }
+
+    .review-panel {
+      overflow: hidden;
+      border: 1px solid #e1e6ee;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 10px 32px rgba(34, 51, 84, .04);
+    }
+
+    .review-list {
+      padding: 4px 18px;
+    }
+
+    .review-list[hidden],
+    .review-state[hidden] {
+      display: none;
+    }
+
+    .review-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: center;
+      padding: 20px 8px;
+      border-bottom: 1px solid #edf0f4;
+    }
+
+    .review-row:last-child {
+      border-bottom: 0;
+    }
+
+    .review-row-main {
+      min-width: 0;
+    }
+
+    .review-row-main > strong {
+      color: #172033;
+      font-size: 15px;
+    }
+
+    .review-row-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      margin-top: 7px;
+      color: #8a95a6;
+      font-size: 11px;
+    }
+
+    .review-row-summary {
+      margin: 10px 0 0;
+      color: #5c687c;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .review-row-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .review-secondary-button,
+    .review-primary-button,
+    .review-danger-button,
+    .review-dialog-cancel {
+      min-height: 38px;
+      padding: 0 13px;
+      border-radius: 9px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .review-secondary-button,
+    .review-dialog-cancel {
+      border: 1px solid #dbe2eb;
+      background: #fff;
+      color: #445168;
+    }
+
+    .review-primary-button {
+      border: 1px solid #2563eb;
+      background: #2563eb;
+      color: #fff;
+    }
+
+    .review-danger-button {
+      border: 1px solid #d95f5f;
+      background: #c94f4f;
+      color: #fff;
+    }
+
+    .review-primary-button:disabled,
+    .review-danger-button:disabled {
+      opacity: .6;
+      cursor: wait;
+    }
+
+    .review-state {
+      display: flex;
+      min-height: 260px;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+      padding: 36px;
+      color: #8a95a6;
+      text-align: center;
+    }
+
+    .review-state p {
+      margin: 0;
+      font-size: 12px;
+    }
+
+    .review-state strong {
+      color: #536078;
+    }
+
+    .review-empty-mark {
+      display: grid;
+      width: 46px;
+      height: 46px;
+      place-items: center;
+      border-radius: 14px;
+      background: #edf9f2;
+      color: #258052;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .review-spinner {
+      width: 26px;
+      height: 26px;
+      border: 3px solid #e8edf5;
+      border-top-color: #4f75e8;
+      border-radius: 50%;
+      animation: review-spin .8s linear infinite;
+    }
+
+    @keyframes review-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .review-dialog {
+      position: fixed;
+      inset: 0;
+      margin: auto;
+      width: min(520px, calc(100vw - 28px));
+      max-height: calc(100vh - 40px);
+      padding: 0;
+      overflow: auto;
+      border: 1px solid #e0e6ef;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 25px 80px rgba(18, 31, 55, .2);
+    }
+
+    .review-dialog::backdrop {
+      background: rgba(21, 32, 52, .43);
+      backdrop-filter: blur(3px);
+    }
+
+    .review-dialog-form {
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+      padding: 25px;
+    }
+
+    .review-dialog-form h2,
+    .review-preview-header h2 {
+      margin: 4px 0 0;
+      color: #172033;
+    }
+
+    .review-file-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 14px;
+      border: 1px solid #e5eaf1;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .review-file-card span {
+      color: #8a95a6;
+      font-size: 11px;
+    }
+
+    .review-dialog-description {
+      margin: 0;
+      color: #6b778c;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .review-dialog-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .review-dialog-form label > span {
+      color: #536078;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .review-dialog-form textarea {
+      min-height: 96px;
+      padding: 11px 12px;
+      resize: vertical;
+      border: 1px solid #dce3ec;
+      border-radius: 9px;
+      outline: none;
+      background: #fbfcfe;
+      font: inherit;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .review-dialog-form textarea:focus {
+      border-color: #8ba8ef;
+      box-shadow: 0 0 0 3px rgba(65, 105, 225, .08);
+    }
+
+    .review-dialog-error {
+      padding: 9px 11px;
+      border-radius: 8px;
+      background: #fff4f4;
+      color: #a94141;
+      font-size: 12px;
+    }
+
+    .review-dialog-error[hidden] {
+      display: none;
+    }
+
+    .review-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .review-preview-dialog {
+      width: min(880px, calc(100vw - 28px));
+    }
+
+    .review-preview-shell {
+      padding: 24px;
+    }
+
+    .review-preview-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 16px;
+    }
+
+    .review-preview-content {
+      max-height: min(62vh, 680px);
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      border: 1px solid #e5eaf1;
+      border-radius: 12px;
+      background: #f8fafc;
+      color: #334155;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 12px/1.75 Consolas, "Courier New", monospace;
+    }
+
+    @media (max-width: 720px) {
+      .review-heading {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .review-row {
+        grid-template-columns: 1fr;
+      }
+
+      .review-row-actions {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</BaseLayout>
