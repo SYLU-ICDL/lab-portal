@@ -199,8 +199,41 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 		let originalMarkdown = "";
 		let saving = false;
 		let uploadingAttachment = false;
+		let syncingPaneScroll = false;
 		const attachmentObjectUrls = new Map<string, string>();
 		const attachmentFetches = new Map<string, Promise<string | null>>();
+
+		function paneScrollSyncEnabled() {
+			return window.matchMedia("(min-width: 1051px)").matches;
+		}
+
+		function syncPaneScroll(
+			source: HTMLElement,
+			target: HTMLElement
+		) {
+			if (!paneScrollSyncEnabled() || syncingPaneScroll) return;
+
+			const sourceMax = Math.max(
+				0,
+				source.scrollHeight - source.clientHeight
+			);
+			const targetMax = Math.max(
+				0,
+				target.scrollHeight - target.clientHeight
+			);
+
+			const ratio =
+				sourceMax > 0
+					? Math.min(1, Math.max(0, source.scrollTop / sourceMax))
+					: 0;
+
+			syncingPaneScroll = true;
+			target.scrollTop = ratio * targetMax;
+
+			window.requestAnimationFrame(() => {
+				syncingPaneScroll = false;
+			});
+		}
 
 		marked.setOptions({
 			gfm: true,
@@ -298,6 +331,12 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			);
 
 			void hydrateProtectedImages(preview, path);
+
+			if (editor && paneScrollSyncEnabled()) {
+				window.requestAnimationFrame(() => {
+					syncPaneScroll(editor, preview);
+				});
+			}
 		}
 
 		function setMessage(
@@ -641,6 +680,20 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			}
 
 			clearMessage();
+		});
+
+		editor?.addEventListener("scroll", () => {
+			if (preview) syncPaneScroll(editor, preview);
+		});
+
+		preview?.addEventListener("scroll", () => {
+			if (editor) syncPaneScroll(preview, editor);
+		});
+
+		window.addEventListener("resize", () => {
+			if (editor && preview && paneScrollSyncEnabled()) {
+				syncPaneScroll(editor, preview);
+			}
 		});
 
 		saveButton?.addEventListener("click", openSaveDialog);
@@ -1114,5 +1167,78 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			opacity: .6;
 			cursor: wait;
 		}
-	</style>
+	
+		/* SYLU-ICDL editor workspace v2 */
+		.editor-page > .container {
+			width: min(96vw, 1680px);
+			max-width: none;
+		}
+
+		.editor-grid {
+			height: clamp(660px, calc(100vh - 250px), 900px);
+			min-height: 0;
+		}
+
+		.editor-pane,
+		.preview-pane {
+			min-height: 0;
+			overflow: hidden;
+		}
+
+		.markdown-editor {
+			height: 100%;
+			min-height: 0;
+			resize: none;
+			overflow-y: auto;
+			scrollbar-width: none;
+			overscroll-behavior: contain;
+		}
+
+		.markdown-editor::-webkit-scrollbar,
+		.preview-body::-webkit-scrollbar {
+			display: none;
+			width: 0;
+			height: 0;
+		}
+
+		.preview-body {
+			min-height: 0;
+			flex: 1;
+			overflow-y: auto;
+			scrollbar-width: none;
+			overscroll-behavior: contain;
+		}
+
+		@media (max-width: 1050px) {
+			.editor-page > .container {
+				width: min(94vw, 980px);
+			}
+
+			.editor-grid {
+				height: auto;
+				min-height: 0;
+			}
+
+			.editor-pane,
+			.preview-pane {
+				overflow: visible;
+			}
+
+			.markdown-editor {
+				min-height: 560px;
+				height: auto;
+				overflow-y: auto;
+				scrollbar-width: auto;
+			}
+
+			.markdown-editor::-webkit-scrollbar {
+				display: initial;
+				width: auto;
+			}
+
+			.preview-body {
+				overflow-y: visible;
+			}
+		}
+</style>
 </BaseLayout>

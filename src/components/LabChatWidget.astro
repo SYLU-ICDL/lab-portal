@@ -121,6 +121,13 @@ const base = import.meta.env.BASE_URL.endsWith("/")
 
   const root = document.querySelector<HTMLElement>("#lab-chat-root");
   const panel = document.querySelector<HTMLElement>("#lab-chat-panel");
+
+  const compactForEditor =
+    window.location.pathname.includes("/documents/edit");
+
+  if (compactForEditor) {
+    root?.classList.add("is-editor-compact");
+  }
   const launcher = document.querySelector<HTMLButtonElement>("#lab-chat-launcher");
   const launcherStatus = document.querySelector<HTMLElement>("#lab-chat-launcher-status");
   const closeButton = document.querySelector<HTMLButtonElement>("#lab-chat-close");
@@ -537,6 +544,7 @@ const base = import.meta.env.BASE_URL.endsWith("/")
 
   async function openPanel() {
     panelOpen = true;
+    root?.classList.add("is-panel-open");
     if (panel) panel.hidden = false;
     launcher?.classList.add("is-open");
 
@@ -550,6 +558,7 @@ const base = import.meta.env.BASE_URL.endsWith("/")
 
   function closePanel() {
     panelOpen = false;
+    root?.classList.remove("is-panel-open");
     if (panel) panel.hidden = true;
     launcher?.classList.remove("is-open");
 
@@ -1189,5 +1198,91 @@ const base = import.meta.env.BASE_URL.endsWith("/")
 
   @media (prefers-reduced-motion: reduce) {
     .lab-chat-panel { animation-duration: 1ms !important; }
+  }
+
+  /* SYLU-ICDL editor compact chat v2 */
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) {
+    width: 58px;
+    gap: 8px;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-chat-launcher {
+    width: 58px;
+    min-width: 58px;
+    height: 58px;
+    min-height: 58px;
+    justify-content: center;
+    padding: 7px;
+    gap: 0;
+    border-radius: 16px;
+    border-color: #d7dfeb;
+    box-shadow: 0 10px 28px rgba(31,46,76,.16);
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-chat-launcher-copy {
+    display: none;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-chat-launcher-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-chat-unread {
+    top: -7px;
+    right: -7px;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-review-alert {
+    width: 58px;
+    min-height: 46px;
+    justify-content: center;
+    border-radius: 13px;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-review-alert a {
+    justify-content: center;
+    padding: 10px 7px;
+    gap: 0;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-review-alert a > span {
+    display: none;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-review-alert a strong {
+    min-width: 26px;
+    height: 26px;
+  }
+
+  .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-review-alert > button {
+    display: none;
+  }
+
+  .lab-chat-root.is-editor-compact.is-panel-open {
+    width: min(460px, calc(100vw - 44px));
+  }
+
+  @media (max-width: 620px) {
+    .lab-chat-root.is-editor-compact:not(.is-panel-open) {
+      left: 10px;
+      right: auto;
+      width: 54px;
+    }
+
+    .lab-chat-root.is-editor-compact:not(.is-panel-open) .lab-chat-launcher {
+      width: 54px;
+      min-width: 54px;
+      height: 54px;
+      min-height: 54px;
+      padding: 6px;
+    }
+
+    .lab-chat-root.is-editor-compact.is-panel-open {
+      left: 10px;
+      right: 10px;
+      width: auto;
+    }
   }
 </style>
