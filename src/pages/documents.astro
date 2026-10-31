@@ -1,0 +1,850 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="共享文档 | SYLU-ICDL"
+  protectedPage={true}
+>
+  <main class="container page documents-page">
+    <section class="documents-heading">
+      <div>
+        <div class="protected-badge">团队资料</div>
+        <h1 class="page-title">共享文档</h1>
+        <p class="page-description">
+          分类整理实验室共享资料，支持在线阅读、编辑与维护。
+        </p>
+      </div>
+
+      <div class="heading-actions">
+        <button id="new-category-button" type="button" class="secondary-action">
+          <span aria-hidden="true">＋</span> 新建分类
+        </button>
+        <button id="refresh-documents" type="button" class="refresh-button">
+          刷新
+        </button>
+      </div>
+    </section>
+
+    <section class="document-library">
+      <div class="library-toolbar">
+        <div class="library-count">
+          <strong id="documents-count">—</strong>
+          <span id="documents-count-label">个文档分类</span>
+        </div>
+        <div id="library-hint" class="library-hint">
+          选择分类查看文档
+        </div>
+      </div>
+
+      <div id="documents-loading" class="documents-state">
+        <div class="loading-ring" aria-hidden="true"></div>
+        <p>正在从 GitHub 私有仓库读取文档…</p>
+      </div>
+
+      <div id="documents-error" class="documents-state error-state" hidden>
+        <div class="state-icon">!</div>
+        <h2>无法读取共享文档</h2>
+        <p id="documents-error-message">请稍后重新尝试。</p>
+      </div>
+
+      <section id="root-panel" class="root-panel" hidden>
+        <div id="category-grid" class="category-grid"></div>
+        <div id="root-empty" class="documents-state" hidden>
+          <div class="state-icon">📁</div>
+          <h2>暂无分类</h2>
+          <p>新建一个分类开始整理资料。</p>
+          <button id="root-empty-create" type="button" class="primary-action">
+            新建第一个分类
+          </button>
+        </div>
+      </section>
+
+      <section id="category-panel" class="category-panel" hidden>
+        <div class="category-heading-row">
+          <div class="category-heading-main">
+            <button id="back-to-categories" type="button" class="breadcrumb-back">
+              ← 返回全部分类
+            </button>
+            <div class="category-kicker">共享文档</div>
+            <h2 id="current-category-title">分类名称</h2>
+            <p id="current-category-description">分类中的 Markdown 文档</p>
+          </div>
+          <div class="category-actions">
+            <button id="new-document-button" type="button" class="primary-action">
+              ＋ 新建文档
+            </button>
+            <button id="delete-category-button" type="button" class="danger-outline-action" hidden>
+              删除分类
+            </button>
+          </div>
+        </div>
+
+        <div class="category-list-toolbar">
+          <span><strong id="category-document-count">0</strong> 篇 Markdown 文档</span>
+          <span>支持阅读、编辑与删除</span>
+        </div>
+
+        <div id="category-empty" class="documents-state" hidden>
+          <div class="state-icon">MD</div>
+          <h2>暂无文档</h2>
+          <p>新建一篇文档开始记录内容。</p>
+        </div>
+
+        <div id="category-documents-list" class="documents-list" hidden></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="category-dialog" class="management-dialog">
+    <form id="category-form" class="dialog-form">
+      <div class="dialog-kicker">文档分类</div>
+      <h2>新建文档分类</h2>
+      <p class="dialog-description">
+        输入名称即可创建新的资料分类。
+      </p>
+      <label for="category-name-input">分类名称</label>
+      <input
+        id="category-name-input"
+        name="name"
+        type="text"
+        maxlength="80"
+        placeholder="例如：论文规范、实验管理、开发规范"
+        required
+      />
+      <div id="category-dialog-error" class="dialog-error" hidden></div>
+      <div class="dialog-actions">
+        <button type="button" class="dialog-cancel" data-close-dialog="category-dialog">取消</button>
+        <button id="create-category-submit" type="submit" class="primary-action">创建分类</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="document-dialog" class="management-dialog document-dialog">
+    <form id="document-form" class="dialog-form">
+      <div class="dialog-kicker">Markdown 文档</div>
+      <h2>新建 Markdown 文档</h2>
+      <p class="dialog-description">
+        在 <strong id="new-document-target">当前分类</strong> 中创建新文档，创建后可继续在线编辑。
+      </p>
+      <label for="document-name-input">文档名称</label>
+      <input
+        id="document-name-input"
+        name="name"
+        type="text"
+        maxlength="100"
+        placeholder="例如：paper-guide"
+        required
+      />
+      <label for="document-markdown-input">Markdown 初始内容</label>
+      <textarea
+        id="document-markdown-input"
+        name="markdown"
+        rows="9"
+        placeholder="# 文档标题\n\n在这里编写 Markdown 内容。"
+      ></textarea>
+      <div id="document-dialog-error" class="dialog-error" hidden></div>
+      <div class="dialog-actions">
+        <button type="button" class="dialog-cancel" data-close-dialog="document-dialog">取消</button>
+        <button id="create-document-submit" type="submit" class="primary-action">创建文档</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    import {
+      clearSession,
+      getCurrentUser,
+      getSessionToken,
+    } from "../lib/auth";
+
+    const AUTH_WORKER =
+      "https://sylu-icdl-auth.hugozhao6.workers.dev";
+    const base = import.meta.env.BASE_URL;
+
+    type DocumentItem = {
+      name: string;
+      fileName: string;
+      path: string;
+      sha: string;
+      size: number;
+      githubUrl?: string;
+    };
+
+    type CategoryItem = {
+      name: string;
+      path: string;
+      type: string;
+    };
+
+    const loading = document.querySelector<HTMLElement>("#documents-loading");
+    const errorBox = document.querySelector<HTMLElement>("#documents-error");
+    const errorMessage = document.querySelector<HTMLElement>("#documents-error-message");
+    const rootPanel = document.querySelector<HTMLElement>("#root-panel");
+    const categoryPanel = document.querySelector<HTMLElement>("#category-panel");
+    const categoryGrid = document.querySelector<HTMLElement>("#category-grid");
+    const rootEmpty = document.querySelector<HTMLElement>("#root-empty");
+    const categoryEmpty = document.querySelector<HTMLElement>("#category-empty");
+    const documentList = document.querySelector<HTMLElement>("#category-documents-list");
+    const count = document.querySelector<HTMLElement>("#documents-count");
+    const countLabel = document.querySelector<HTMLElement>("#documents-count-label");
+    const hint = document.querySelector<HTMLElement>("#library-hint");
+
+    const refreshButton = document.querySelector<HTMLButtonElement>("#refresh-documents");
+    const newCategoryButton = document.querySelector<HTMLButtonElement>("#new-category-button");
+    const rootEmptyCreate = document.querySelector<HTMLButtonElement>("#root-empty-create");
+    const backButton = document.querySelector<HTMLButtonElement>("#back-to-categories");
+    const newDocumentButton = document.querySelector<HTMLButtonElement>("#new-document-button");
+    const deleteCategoryButton = document.querySelector<HTMLButtonElement>("#delete-category-button");
+
+    const currentCategoryTitle = document.querySelector<HTMLElement>("#current-category-title");
+    const currentCategoryDescription = document.querySelector<HTMLElement>("#current-category-description");
+    const categoryDocumentCount = document.querySelector<HTMLElement>("#category-document-count");
+
+    const categoryDialog = document.querySelector<HTMLDialogElement>("#category-dialog");
+    const categoryForm = document.querySelector<HTMLFormElement>("#category-form");
+    const categoryNameInput = document.querySelector<HTMLInputElement>("#category-name-input");
+    const categoryDialogError = document.querySelector<HTMLElement>("#category-dialog-error");
+    const createCategorySubmit = document.querySelector<HTMLButtonElement>("#create-category-submit");
+
+    const documentDialog = document.querySelector<HTMLDialogElement>("#document-dialog");
+    const documentForm = document.querySelector<HTMLFormElement>("#document-form");
+    const documentNameInput = document.querySelector<HTMLInputElement>("#document-name-input");
+    const documentMarkdownInput = document.querySelector<HTMLTextAreaElement>("#document-markdown-input");
+    const documentDialogError = document.querySelector<HTMLElement>("#document-dialog-error");
+    const createDocumentSubmit = document.querySelector<HTMLButtonElement>("#create-document-submit");
+    const newDocumentTarget = document.querySelector<HTMLElement>("#new-document-target");
+
+    const themes = ["blue", "green", "orange", "purple", "cyan", "rose", "indigo", "amber"];
+    let currentCategory: string | null = null;
+    let currentIsUncategorized = false;
+    let busy = false;
+    let canEditDocuments = false;
+
+    function hashValue(value: string) {
+      let hash = 0;
+      for (let i = 0; i < value.length; i++) {
+        hash = ((hash << 5) - hash) + value.charCodeAt(i);
+        hash |= 0;
+      }
+      return Math.abs(hash);
+    }
+
+    function pickTheme(index: number, seed = "") {
+      const offset = seed ? hashValue(seed) % themes.length : 0;
+      return themes[(offset + index) % themes.length];
+    }
+
+    function showLoading() {
+      for (const el of [loading, errorBox, rootPanel, categoryPanel]) {
+        if (el) el.hidden = el !== loading;
+      }
+    }
+
+    function showError(message: string) {
+      if (errorMessage) errorMessage.textContent = message;
+      for (const el of [loading, errorBox, rootPanel, categoryPanel]) {
+        if (el) el.hidden = el !== errorBox;
+      }
+    }
+
+    function showRoot() {
+      for (const el of [loading, errorBox, rootPanel, categoryPanel]) {
+        if (el) el.hidden = el !== rootPanel;
+      }
+    }
+
+    function showCategory() {
+      for (const el of [loading, errorBox, rootPanel, categoryPanel]) {
+        if (el) el.hidden = el !== categoryPanel;
+      }
+    }
+
+    async function apiRequest(path: string, init: RequestInit = {}) {
+      const session = getSessionToken();
+      if (!session) {
+        window.location.reload();
+        throw new Error("登录状态已失效，请重新登录。");
+      }
+
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${session}`);
+      if (init.body && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
+
+      const response = await fetch(`${AUTH_WORKER}${path}`, {
+        ...init,
+        headers,
+        cache: "no-store",
+      });
+
+      if (response.status === 401) {
+        clearSession();
+        window.location.reload();
+        throw new Error("登录会话已过期，请重新登录。");
+      }
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || `请求失败（HTTP ${response.status}）。`);
+      }
+      return data;
+    }
+
+    function makePageUrl(params?: { category?: string; uncategorized?: boolean }) {
+      const url = new URL(window.location.href);
+      url.search = "";
+      if (params?.category) url.searchParams.set("category", params.category);
+      if (params?.uncategorized) url.searchParams.set("uncategorized", "1");
+      return url;
+    }
+
+    function navigateToRoot() {
+      currentCategory = null;
+      currentIsUncategorized = false;
+      const url = makePageUrl();
+      window.history.pushState({}, "", url);
+      loadFromLocation();
+    }
+
+    function navigateToCategory(category: string | null, uncategorized = false) {
+      currentCategory = category;
+      currentIsUncategorized = uncategorized;
+      const url = makePageUrl(
+        uncategorized ? { uncategorized: true } : category ? { category } : undefined
+      );
+      window.history.pushState({}, "", url);
+      loadFromLocation();
+    }
+
+    function createCategoryCard(item: CategoryItem | { name: string; path: string; uncategorized: true; count: number }, index: number) {
+      const name = item.name;
+      const theme = pickTheme(index, "categories-root");
+      const card = document.createElement("article");
+      card.className = `category-card theme-${theme}`;
+
+      const accent = document.createElement("div");
+      accent.className = "category-accent";
+
+      const body = document.createElement("div");
+      body.className = "category-card-main";
+
+      const badge = document.createElement("span");
+      badge.className = "category-type-badge";
+      badge.textContent = "uncategorized" in item ? "默认分类" : "文件夹分类";
+
+      const title = document.createElement("h2");
+      title.textContent = name;
+
+      const description = document.createElement("p");
+      description.textContent = "uncategorized" in item
+        ? `${item.count} 篇文档 · 未归类资料`
+        : "资料分类";
+
+      body.append(badge, title, description);
+
+      const enter = document.createElement("button");
+      enter.type = "button";
+      enter.className = "category-enter-button";
+      enter.textContent = "进入分类　→";
+      enter.addEventListener("click", () => {
+        if ("uncategorized" in item) navigateToCategory(null, true);
+        else navigateToCategory(item.name);
+      });
+
+      card.append(accent, body, enter);
+      return card;
+    }
+
+    function createDocumentRow(item: DocumentItem, index: number) {
+      const row = document.createElement("article");
+      const theme = pickTheme(index, currentCategory || (currentIsUncategorized ? "uncategorized" : "documents"));
+      row.className = `document-row theme-${theme}`;
+
+      const accent = document.createElement("div");
+      accent.className = "document-accent";
+
+      const body = document.createElement("div");
+      body.className = "document-main";
+
+      const badge = document.createElement("span");
+      badge.className = "file-type-badge";
+      badge.textContent = "Markdown";
+
+      const title = document.createElement("h3");
+      title.className = "document-title";
+      title.textContent = item.name;
+      body.append(badge, title);
+
+      const actions = document.createElement("div");
+      actions.className = "document-actions";
+
+      const readLink = document.createElement("a");
+      readLink.className = "read-button";
+      readLink.href = `${base}documents/view?path=${encodeURIComponent(item.path)}`;
+      readLink.textContent = "阅读　→";
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "delete-document-button";
+      deleteButton.textContent = "删除";
+      deleteButton.addEventListener("click", () => deleteDocument(item));
+
+      actions.append(readLink);
+      if (canEditDocuments) actions.append(deleteButton);
+      row.append(accent, body, actions);
+      return row;
+    }
+
+    async function loadRoot() {
+      showLoading();
+      try {
+        const data = await apiRequest("/api/documents");
+        const categories: CategoryItem[] = (Array.isArray(data.categories) ? data.categories : []).sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
+        const groups: Array<CategoryItem | { name: string; path: string; uncategorized: true; count: number }> = [...categories];
+
+        if (Number(data.uncategorizedCount) > 0) {
+          groups.push({
+            name: "未分类文档",
+            path: "documents",
+            uncategorized: true,
+            count: Number(data.uncategorizedCount),
+          });
+        }
+
+        if (count) count.textContent = String(groups.length);
+        if (countLabel) countLabel.textContent = "个文档分类";
+        if (hint) hint.textContent = "选择分类查看文档";
+
+        if (categoryGrid) {
+          categoryGrid.replaceChildren(...groups.map((item, index) => createCategoryCard(item, index)));
+          categoryGrid.hidden = groups.length === 0;
+        }
+        if (rootEmpty) rootEmpty.hidden = groups.length !== 0;
+        if (newCategoryButton) newCategoryButton.hidden = !canEditDocuments;
+        showRoot();
+      } catch (error) {
+        console.error(error);
+        showError(error instanceof Error ? error.message : "读取共享文档失败，请检查网络或 Worker 状态。");
+      }
+    }
+
+    async function loadCategory() {
+      showLoading();
+      const query = currentIsUncategorized
+        ? "?uncategorized=1"
+        : `?category=${encodeURIComponent(currentCategory || "")}`;
+
+      try {
+        const data = await apiRequest(`/api/documents${query}`);
+        const documents: DocumentItem[] = (Array.isArray(data.documents) ? data.documents : []).sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
+        const displayName = currentIsUncategorized ? "未分类文档" : (data.category || currentCategory || "文档分类");
+
+        if (currentCategoryTitle) currentCategoryTitle.textContent = displayName;
+        if (currentCategoryDescription) {
+          currentCategoryDescription.textContent = currentIsUncategorized
+            ? "尚未归入具体分类的文档。"
+            : `“${displayName}”中的 Markdown 文档`;
+        }
+        if (categoryDocumentCount) categoryDocumentCount.textContent = String(documents.length);
+        if (count) count.textContent = String(documents.length);
+        if (countLabel) countLabel.textContent = "篇 Markdown 文档";
+        if (hint) hint.textContent = currentIsUncategorized
+          ? "选择文档即可阅读或编辑"
+          : "选择文档即可阅读或编辑";
+        if (newCategoryButton) newCategoryButton.hidden = true;
+        if (deleteCategoryButton) deleteCategoryButton.hidden = currentIsUncategorized || !canEditDocuments;
+
+        if (documentList) {
+          documentList.replaceChildren(...documents.map((item, index) => createDocumentRow(item, index)));
+          documentList.hidden = documents.length === 0;
+        }
+        if (categoryEmpty) categoryEmpty.hidden = documents.length !== 0;
+        showCategory();
+      } catch (error) {
+        console.error(error);
+        showError(error instanceof Error ? error.message : "读取分类文档失败。");
+      }
+    }
+
+    async function loadFromLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const category = params.get("category");
+      const uncategorized = params.get("uncategorized") === "1";
+      if (category !== null) {
+        currentCategory = category;
+        currentIsUncategorized = false;
+        await loadCategory();
+      } else if (uncategorized) {
+        currentCategory = null;
+        currentIsUncategorized = true;
+        await loadCategory();
+      } else {
+        currentCategory = null;
+        currentIsUncategorized = false;
+        await loadRoot();
+      }
+    }
+
+    function showDialogError(target: HTMLElement | null, message: string) {
+      if (!target) return;
+      target.textContent = message;
+      target.hidden = false;
+    }
+
+    function setButtonBusy(button: HTMLButtonElement | null, busy: boolean, idleText: string, busyText: string) {
+      if (!button) return;
+      button.disabled = busy;
+      button.textContent = busy ? busyText : idleText;
+    }
+
+    async function deleteDocument(item: DocumentItem) {
+      const confirmed = window.confirm(
+        `确定删除文档“${item.name}”吗？\n\n该操作会直接在 GitHub 仓库中删除文件并生成 Commit。`
+      );
+      if (!confirmed) return;
+
+      try {
+        await apiRequest("/api/documents/content", {
+          method: "DELETE",
+          body: JSON.stringify({ path: item.path, sha: item.sha }),
+        });
+        await loadCategory();
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "删除文档失败。");
+      }
+    }
+
+    async function deleteCurrentCategory() {
+      if (!currentCategory || currentIsUncategorized) return;
+      const confirmed = window.confirm(
+        `确定删除分类“${currentCategory}”及其中的全部 Markdown 文档吗？\n\n该操作会逐个删除 GitHub 文件并生成 Commit，无法通过网站直接撤销。`
+      );
+      if (!confirmed) return;
+
+      if (busy) return;
+      busy = true;
+      if (deleteCategoryButton) {
+        deleteCategoryButton.disabled = true;
+        deleteCategoryButton.textContent = "正在删除…";
+      }
+
+      try {
+        await apiRequest("/api/documents/categories", {
+          method: "DELETE",
+          body: JSON.stringify({ name: currentCategory, confirmName: currentCategory }),
+        });
+        currentCategory = null;
+        currentIsUncategorized = false;
+        const url = makePageUrl();
+        window.history.pushState({}, "", url);
+        await loadRoot();
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "删除分类失败。");
+      } finally {
+        busy = false;
+        if (deleteCategoryButton) {
+          deleteCategoryButton.disabled = false;
+          deleteCategoryButton.textContent = "删除分类";
+        }
+      }
+    }
+
+    newCategoryButton?.addEventListener("click", () => {
+      if (categoryDialogError) categoryDialogError.hidden = true;
+      categoryForm?.reset();
+      categoryDialog?.showModal();
+      categoryNameInput?.focus();
+    });
+
+    rootEmptyCreate?.addEventListener("click", () => newCategoryButton?.click());
+
+    categoryForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      const name = categoryNameInput?.value.trim() || "";
+      if (!name) {
+        showDialogError(categoryDialogError, "请输入分类名称。");
+        return;
+      }
+
+      busy = true;
+      setButtonBusy(createCategorySubmit, true, "创建分类", "正在创建…");
+      if (categoryDialogError) categoryDialogError.hidden = true;
+
+      try {
+        await apiRequest("/api/documents/categories", {
+          method: "POST",
+          body: JSON.stringify({ name }),
+        });
+        categoryDialog?.close();
+        await loadRoot();
+      } catch (error) {
+        showDialogError(categoryDialogError, error instanceof Error ? error.message : "创建分类失败。");
+      } finally {
+        busy = false;
+        setButtonBusy(createCategorySubmit, false, "创建分类", "正在创建…");
+      }
+    });
+
+    newDocumentButton?.addEventListener("click", () => {
+      if (documentDialogError) documentDialogError.hidden = true;
+      documentForm?.reset();
+      if (newDocumentTarget) {
+        newDocumentTarget.textContent = currentIsUncategorized
+          ? "未分类文档（documents 根目录）"
+          : `“${currentCategory || "未分类文档"}”`;
+      }
+      documentDialog?.showModal();
+      documentNameInput?.focus();
+    });
+
+    documentForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy) return;
+
+      const name = documentNameInput?.value.trim() || "";
+      const markdown = documentMarkdownInput?.value || "";
+      if (!name) {
+        showDialogError(documentDialogError, "请输入文档名称。");
+        return;
+      }
+
+      busy = true;
+      setButtonBusy(createDocumentSubmit, true, "创建文档", "正在创建…");
+      if (documentDialogError) documentDialogError.hidden = true;
+
+      try {
+        await apiRequest("/api/documents", {
+          method: "POST",
+          body: JSON.stringify({
+            category: currentIsUncategorized ? null : currentCategory,
+            name,
+            markdown,
+          }),
+        });
+        documentDialog?.close();
+        await loadCategory();
+      } catch (error) {
+        showDialogError(documentDialogError, error instanceof Error ? error.message : "创建文档失败。");
+      } finally {
+        busy = false;
+        setButtonBusy(createDocumentSubmit, false, "创建文档", "正在创建…");
+      }
+    });
+
+    document.querySelectorAll<HTMLButtonElement>("[data-close-dialog]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = button.dataset.closeDialog;
+        if (id === "category-dialog") categoryDialog?.close();
+        if (id === "document-dialog") documentDialog?.close();
+      });
+    });
+
+    backButton?.addEventListener("click", navigateToRoot);
+    deleteCategoryButton?.addEventListener("click", deleteCurrentCategory);
+    refreshButton?.addEventListener("click", loadFromLocation);
+    window.addEventListener("popstate", loadFromLocation);
+
+    async function initializeDocumentPermissions() {
+      const me = await getCurrentUser();
+      canEditDocuments = Boolean(me?.access?.canWriteDocuments);
+      if (newCategoryButton) newCategoryButton.hidden = !canEditDocuments;
+      if (rootEmptyCreate) rootEmptyCreate.hidden = !canEditDocuments;
+      if (newDocumentButton) newDocumentButton.hidden = !canEditDocuments;
+      if (deleteCategoryButton && !canEditDocuments) deleteCategoryButton.hidden = true;
+      await loadFromLocation();
+    }
+
+    initializeDocumentPermissions();
+  </script>
+
+  <style is:global>
+    .documents-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 30px;
+    }
+
+    .documents-heading .page-description { max-width: 780px; margin-bottom: 0; }
+    .documents-heading code, .documents-state code, .dialog-description code {
+      padding: 2px 7px; border-radius: 6px; background: #eef1f6; color: #4a566a; font-size: .9em;
+    }
+
+    .heading-actions, .category-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+    .refresh-button, .secondary-action, .primary-action, .danger-outline-action, .dialog-cancel {
+      display: inline-flex; min-height: 40px; align-items: center; justify-content: center; gap: 7px;
+      padding: 0 16px; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 800;
+      transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
+    }
+    .refresh-button, .secondary-action, .dialog-cancel {
+      border: 1px solid #d9e0ea; background: #fff; color: #273349;
+    }
+    .refresh-button:hover, .secondary-action:hover, .dialog-cancel:hover { background: #f8fafc; transform: translateY(-1px); }
+    .primary-action { border: 1px solid #3269e8; background: #3269e8; color: #fff; box-shadow: 0 5px 14px rgba(50,105,232,.16); }
+    .primary-action:hover { background: #255bd4; transform: translateY(-1px); }
+    .primary-action:disabled, .danger-outline-action:disabled { opacity: .6; cursor: wait; }
+    .danger-outline-action { border: 1px solid #f1c8c8; background: #fff; color: #bd4545; }
+    .danger-outline-action:hover { background: #fff5f5; }
+
+    .document-library {
+      overflow: hidden; border: 1px solid #e1e6ef; border-radius: 16px; background: #fff;
+      box-shadow: 0 14px 38px rgba(34,51,84,.055);
+    }
+    .library-toolbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 20px;
+      padding: 16px 20px; border-bottom: 1px solid #edf0f4; background: linear-gradient(180deg,#fff 0%,#fafbfd 100%);
+    }
+    .library-count { display: flex; align-items: baseline; gap: 6px; color: #7a8597; font-size: 13px; }
+    .library-count strong { color: #172033; font-size: 17px; font-weight: 800; }
+    .library-hint { color: #98a2b2; font-size: 12px; text-align: right; }
+    .documents-state {
+      display: flex; min-height: 270px; align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+      padding: 32px; color: #8792a3; text-align: center;
+    }
+    .documents-state[hidden], .root-panel[hidden], .category-panel[hidden], .category-grid[hidden], .documents-list[hidden] { display: none; }
+    .documents-state h2 { margin: 4px 0 0; color: #273349; font-size: 18px; }
+    .documents-state p { max-width: 560px; margin: 0; font-size: 13px; line-height: 1.7; }
+    .loading-ring { width: 28px; height: 28px; border: 3px solid #e4eaf2; border-top-color: #3269e8; border-radius: 50%; animation: docs-spin .8s linear infinite; }
+    .state-icon { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 13px; background: #eef3ff; color: #416ee5; font-size: 18px; font-weight: 900; }
+    .error-state .state-icon { background: #fff0f0; color: #c54040; }
+    @keyframes docs-spin { to { transform: rotate(360deg); } }
+
+    .root-panel, .category-panel { padding: 18px; background: #f7f9fc; }
+    .category-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+    .category-card {
+      --accent:#5b72f2; --soft:#f0f2ff; --border:#cfd5ff; --text:#4f64d8;
+      display: grid; grid-template-columns: 6px minmax(0,1fr) auto; align-items: center; gap: 17px;
+      min-height: 126px; padding: 17px 18px 17px 14px; overflow: hidden; border: 1px solid var(--border); border-radius: 14px;
+      background: linear-gradient(90deg,var(--soft) 0%,#fff 45%,#fff 100%); box-shadow: 0 5px 14px rgba(34,51,84,.035);
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+    .category-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(34,51,84,.075); }
+    .category-accent { width: 6px; height: 70px; border-radius: 999px; background: var(--accent); }
+    .category-card-main { min-width: 0; }
+    .category-type-badge { display: inline-flex; height: 26px; align-items: center; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: #fff; color: var(--text); font-size: 11px; font-weight: 800; }
+    .category-card h2 { margin: 8px 0 4px; overflow: hidden; color: #172033; font-size: 18px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
+    .category-card p { margin: 0; color: #8490a2; font-size: 12px; line-height: 1.5; }
+    .category-enter-button { min-width: 106px; height: 38px; padding: 0 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--accent); color: #fff; cursor: pointer; font-size: 12px; font-weight: 800; transition: filter .18s ease, transform .18s ease; }
+    .category-enter-button:hover { filter: brightness(.96); transform: translateY(-1px); }
+
+    .theme-blue { --accent:#5b72f2; --soft:#f0f2ff; --border:#cfd5ff; --text:#4f64d8; }
+    .theme-green { --accent:#25b47e; --soft:#eefbf5; --border:#c2ecd9; --text:#169864; }
+    .theme-orange { --accent:#ef8b25; --soft:#fff5ea; --border:#ffd6ad; --text:#d8720b; }
+    .theme-purple { --accent:#7659e8; --soft:#f4f1ff; --border:#d9d0ff; --text:#6548d7; }
+    .theme-cyan { --accent:#159fb5; --soft:#edfafd; --border:#bce8ef; --text:#11879a; }
+    .theme-rose { --accent:#d85d82; --soft:#fff1f5; --border:#f4c8d5; --text:#bf466d; }
+    .theme-indigo { --accent:#4b67d1; --soft:#eef2ff; --border:#c9d4ff; --text:#3f58bc; }
+    .theme-amber { --accent:#c98a15; --soft:#fff8e7; --border:#f3ddb0; --text:#a96f07; }
+
+    .category-heading-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; padding: 8px 4px 20px; }
+    .category-heading-main { min-width: 0; }
+    .breadcrumb-back { display: block; margin: 0 0 15px; padding: 0; border: 0; background: transparent; color: #53709e; cursor: pointer; font-size: 13px; font-weight: 800; }
+    .breadcrumb-back:hover { color: #2563eb; }
+    .category-kicker { color: #4774e8; font-size: 11px; font-weight: 850; letter-spacing: .5px; }
+    .category-heading-row h2 { margin: 5px 0 5px; color: #172033; font-size: 25px; }
+    .category-heading-row p { margin: 0; color: #8792a3; font-size: 12px; }
+    .category-list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 15px; border: 1px solid #e5eaf1; border-radius: 10px 10px 0 0; background: #fff; color: #8994a5; font-size: 12px; }
+    .category-list-toolbar strong { color: #25334a; font-size: 15px; }
+    .documents-list { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid #e5eaf1; border-top: 0; border-radius: 0 0 10px 10px; background: #fff; }
+    .document-row {
+      --accent:#4f7cff; --soft:#eef4ff; --border:#cfdcff; --text:#3567de;
+      display: grid; grid-template-columns: 6px minmax(0,1fr) auto; align-items: center; gap: 18px;
+      min-height: 78px; padding: 12px 14px; overflow: hidden; border: 1px solid var(--border); border-radius: 12px;
+      background: linear-gradient(90deg,var(--soft) 0%,#fff 30%,#fff 100%); box-shadow: 0 4px 12px rgba(34,51,84,.03);
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+    .document-row:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(34,51,84,.07); }
+    .document-accent { width: 6px; height: 48px; border-radius: 999px; background: var(--accent); }
+    .document-main { display: flex; min-width: 0; align-items: center; gap: 15px; }
+    .file-type-badge { display: inline-flex; height: 30px; flex: 0 0 auto; align-items: center; justify-content: center; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: #fff; color: var(--text); font-size: 11px; font-weight: 850; }
+    .document-title { margin: 0; overflow: hidden; color: #172033; font-size: 16px; font-weight: 850; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+    .document-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+    .read-button { display: inline-flex; min-width: 84px; height: 38px; align-items: center; justify-content: center; padding: 0 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 850; text-decoration: none; transition: filter .18s ease, transform .18s ease; }
+    .read-button:hover { filter: brightness(.96); transform: translateY(-1px); }
+    .delete-document-button { height: 38px; padding: 0 13px; border: 1px solid #f0cccc; border-radius: 9px; background: #fff; color: #bd4545; cursor: pointer; font-size: 12px; font-weight: 800; }
+    .delete-document-button:hover { background: #fff5f5; }
+
+    .management-dialog {
+      position: fixed;
+      inset: 0;
+      margin: auto;
+
+      width: min(520px, calc(100vw - 32px));
+      max-width: 520px;
+      max-height: min(82vh, 720px);
+
+      padding: 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+
+      border: 1px solid #e0e6ef;
+      border-radius: 17px;
+
+      background: #fff;
+
+      box-shadow:
+        0 28px 85px rgba(18,31,55,.24),
+        0 8px 24px rgba(18,31,55,.08);
+    }
+
+    .management-dialog.document-dialog {
+      width: min(620px, calc(100vw - 32px));
+      max-width: 620px;
+    }
+
+    .management-dialog::backdrop {
+      background: rgba(21,32,52,.45);
+      backdrop-filter: blur(4px);
+    }
+
+    .dialog-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 27px;
+    }
+    .dialog-kicker { color: #4774e8; font-size: 10px; font-weight: 900; letter-spacing: 1px; }
+    .dialog-form h2 { margin: 0; color: #172033; font-size: 22px; }
+    .dialog-description { margin: 0 0 8px; color: #8490a2; font-size: 12px; line-height: 1.7; }
+    .dialog-form label { margin-top: 6px; color: #4c596e; font-size: 12px; font-weight: 800; }
+    .dialog-form input, .dialog-form textarea { width: 100%; padding: 11px 12px; border: 1px solid #dce3ec; border-radius: 9px; outline: none; background: #fbfcfe; color: #25334a; font: inherit; font-size: 13px; }
+    .dialog-form textarea { min-height: 170px; resize: vertical; font-family: Consolas,monospace; line-height: 1.65; }
+    .dialog-form input:focus, .dialog-form textarea:focus { border-color: #7da0f3; box-shadow: 0 0 0 3px rgba(70,115,232,.1); }
+    .dialog-error { padding: 10px 12px; border: 1px solid #f1caca; border-radius: 8px; background: #fff5f5; color: #ad4040; font-size: 12px; line-height: 1.6; }
+    .dialog-error[hidden] { display: none; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 10px; }
+    .document-dialog { width: min(680px,calc(100vw - 32px)); max-width: 680px; }
+
+    @media (max-width: 850px) {
+      .category-grid { grid-template-columns: 1fr; }
+      .category-heading-row { align-items: flex-start; flex-direction: column; }
+      .category-actions { width: 100%; }
+      .category-actions button { flex: 1; }
+    }
+    @media (max-width: 640px) {
+      .documents-heading { align-items: flex-start; flex-direction: column; }
+      .heading-actions { width: 100%; }
+      .heading-actions button { flex: 1; }
+      .library-toolbar, .category-list-toolbar { align-items: flex-start; flex-direction: column; gap: 6px; }
+      .library-hint { text-align: left; }
+      .category-card { grid-template-columns: 5px minmax(0,1fr); }
+      .category-enter-button { grid-column: 2; justify-self: start; }
+      .document-row { grid-template-columns: 5px minmax(0,1fr); gap: 12px; }
+      .document-main { align-items: flex-start; flex-direction: column; gap: 7px; }
+      .document-actions { grid-column: 2; justify-content: flex-start; }
+      .management-dialog,
+      .management-dialog.document-dialog {
+        width: calc(100vw - 24px);
+        max-width: none;
+        max-height: calc(100dvh - 24px);
+        border-radius: 14px;
+      }
+
+      .dialog-form { padding: 21px; }
+    }
+  </style>
+</BaseLayout>

@@ -1,0 +1,1404 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="科研工作区 | SYLU-ICDL"
+  protectedPage={true}
+>
+  <main class="container workspace-page">
+    <section class="workspace-hero">
+      <div class="hero-copy">
+        <div class="protected-badge">GitHub 工作区</div>
+        <h1>科研工作区</h1>
+        <p>
+          集中查看你的仓库、协作仓库和实验室科研项目。
+        </p>
+      </div>
+
+      <div id="profile-card" class="profile-card profile-loading">
+        <div class="profile-avatar-skeleton"></div>
+        <div class="profile-lines">
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="connect-panel"
+      class="connect-panel"
+      hidden
+    >
+      <div class="connect-icon">GH</div>
+
+      <div class="connect-copy">
+        <div class="connect-eyebrow">首次连接</div>
+        <h2>连接 GitHub 仓库</h2>
+        <p>
+          选择需要接入的仓库即可，Public 与 Private 均支持。
+        </p>
+      </div>
+
+      <button
+        id="connect-button"
+        type="button"
+        class="connect-button"
+      >
+        连接我的 GitHub 仓库
+        <span>→</span>
+      </button>
+    </section>
+
+    <section
+      id="connected-panel"
+      class="connected-panel"
+      hidden
+    >
+      <div class="connected-main">
+        <span class="connection-dot"></span>
+        <div>
+          <strong>GitHub 已连接</strong>
+          <p id="connection-detail">仓库已同步</p>
+        </div>
+      </div>
+
+      <a
+        id="manage-repositories"
+        class="manage-button"
+        href="#"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        管理已连接仓库
+      </a>
+    </section>
+
+    <section class="workspace-overview">
+      <article class="metric-card metric-mine">
+        <div class="metric-icon">我</div>
+        <div>
+          <span>我的仓库</span>
+          <strong id="count-mine">—</strong>
+        </div>
+      </article>
+
+      <article class="metric-card metric-shared">
+        <div class="metric-icon">协</div>
+        <div>
+          <span>与我共享</span>
+          <strong id="count-shared">—</strong>
+        </div>
+      </article>
+
+      <article class="metric-card metric-projects">
+        <div class="metric-icon">研</div>
+        <div>
+          <span>科研项目</span>
+          <strong id="count-projects">—</strong>
+        </div>
+      </article>
+    </section>
+
+    <section class="workspace-browser">
+      <div class="browser-toolbar">
+        <div class="workspace-tabs" role="tablist" aria-label="仓库分类">
+          <button
+            type="button"
+            class="workspace-tab active"
+            data-tab="mine"
+            role="tab"
+            aria-selected="true"
+          >
+            我的仓库
+            <span id="tab-count-mine">0</span>
+          </button>
+
+          <button
+            type="button"
+            class="workspace-tab"
+            data-tab="shared"
+            role="tab"
+            aria-selected="false"
+          >
+            与我共享
+            <span id="tab-count-shared">0</span>
+          </button>
+
+          <button
+            type="button"
+            class="workspace-tab"
+            data-tab="projects"
+            role="tab"
+            aria-selected="false"
+          >
+            科研项目
+            <span id="tab-count-projects">0</span>
+          </button>
+        </div>
+
+        <div class="browser-actions">
+          <label class="search-box">
+            <span class="search-symbol">⌕</span>
+            <input
+              id="repository-search"
+              type="search"
+              placeholder="搜索仓库"
+              autocomplete="off"
+            />
+          </label>
+
+          <button
+            id="refresh-workspace"
+            type="button"
+            class="refresh-button"
+          >
+            刷新
+          </button>
+        </div>
+      </div>
+
+      <div id="workspace-loading" class="workspace-state">
+        <div class="loading-ring"></div>
+        <h2>正在加载仓库</h2>
+        <p>请稍候…</p>
+      </div>
+
+      <div
+        id="workspace-error"
+        class="workspace-state error-state"
+        hidden
+      >
+        <div class="state-icon">!</div>
+        <h2>无法读取科研工作区</h2>
+        <p id="workspace-error-message">请稍后重新尝试。</p>
+      </div>
+
+      <div
+        id="repository-empty"
+        class="workspace-state"
+        hidden
+      >
+        <div class="state-icon empty-icon">Git</div>
+        <h2 id="empty-title">这里还没有仓库</h2>
+        <p id="empty-message"></p>
+      </div>
+
+      <div
+        id="repository-list"
+        class="repository-list"
+        hidden
+      ></div>
+    </section>
+  </main>
+
+  <script>
+    import {
+      clearSession,
+      getSessionToken,
+    } from "../lib/auth";
+
+    const AUTH_WORKER =
+      "https://sylu-icdl-auth.hugozhao6.workers.dev";
+
+    type TabName = "mine" | "shared" | "projects";
+
+    type Repository = {
+      id: number;
+      name: string;
+      fullName: string;
+      description: string;
+      htmlUrl: string;
+      private: boolean;
+      visibility: string;
+      language: string | null;
+      role: string;
+      topics: string[];
+      archived: boolean;
+      fork: boolean;
+      updatedAt: string | null;
+      owner: {
+        login: string;
+        type: string;
+        avatarUrl: string | null;
+      };
+    };
+
+    type WorkspaceData = {
+      user: {
+        id: number;
+        login: string;
+        name: string | null;
+        avatarUrl: string;
+        htmlUrl: string;
+      };
+      connection: {
+        personalConnected: boolean;
+        personalRepositorySelection: string | null;
+        manageUrl: string | null;
+        connectUrl: string;
+        installationCount: number;
+      };
+      counts: {
+        mine: number;
+        shared: number;
+        projects: number;
+        visible: number;
+      };
+      repositories: {
+        mine: Repository[];
+        shared: Repository[];
+        projects: Repository[];
+      };
+    };
+
+    let workspaceData: WorkspaceData | null = null;
+    let activeTab: TabName = "mine";
+    let searchText = "";
+
+    const loading =
+      document.querySelector<HTMLElement>("#workspace-loading");
+    const errorBox =
+      document.querySelector<HTMLElement>("#workspace-error");
+    const errorMessage =
+      document.querySelector<HTMLElement>("#workspace-error-message");
+    const emptyBox =
+      document.querySelector<HTMLElement>("#repository-empty");
+    const emptyTitle =
+      document.querySelector<HTMLElement>("#empty-title");
+    const emptyMessage =
+      document.querySelector<HTMLElement>("#empty-message");
+    const repositoryList =
+      document.querySelector<HTMLElement>("#repository-list");
+    const refreshButton =
+      document.querySelector<HTMLButtonElement>("#refresh-workspace");
+    const searchInput =
+      document.querySelector<HTMLInputElement>("#repository-search");
+    const connectPanel =
+      document.querySelector<HTMLElement>("#connect-panel");
+    const connectedPanel =
+      document.querySelector<HTMLElement>("#connected-panel");
+    const connectButton =
+      document.querySelector<HTMLButtonElement>("#connect-button");
+    const manageLink =
+      document.querySelector<HTMLAnchorElement>("#manage-repositories");
+    const connectionDetail =
+      document.querySelector<HTMLElement>("#connection-detail");
+    const profileCard =
+      document.querySelector<HTMLElement>("#profile-card");
+
+    const countElements = {
+      mine: document.querySelector<HTMLElement>("#count-mine"),
+      shared: document.querySelector<HTMLElement>("#count-shared"),
+      projects: document.querySelector<HTMLElement>("#count-projects"),
+    };
+
+    const tabCountElements = {
+      mine: document.querySelector<HTMLElement>("#tab-count-mine"),
+      shared: document.querySelector<HTMLElement>("#tab-count-shared"),
+      projects: document.querySelector<HTMLElement>("#tab-count-projects"),
+    };
+
+    const labels: Record<TabName, {
+      title: string;
+      empty: string;
+    }> = {
+      mine: {
+        title: "我的仓库",
+        empty:
+          "还没有接入个人仓库。",
+      },
+      shared: {
+        title: "与我共享",
+        empty:
+          "目前没有与你共享的仓库。",
+      },
+      projects: {
+        title: "科研项目",
+        empty:
+          "暂无科研项目。",
+      },
+    };
+
+    function showMainState(
+      target: HTMLElement | null
+    ) {
+      for (const element of [
+        loading,
+        errorBox,
+        emptyBox,
+        repositoryList,
+      ]) {
+        if (element) {
+          element.hidden = element !== target;
+        }
+      }
+    }
+
+    function formatDate(value: string | null) {
+      if (!value) return "更新时间未知";
+
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return "更新时间未知";
+      }
+
+      return new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(date);
+    }
+
+    function roleLabel(role: string) {
+      const map: Record<string, string> = {
+        admin: "管理员",
+        maintain: "维护",
+        write: "可写",
+        triage: "分类",
+        read: "只读",
+      };
+
+      return map[role] || "可访问";
+    }
+
+    function buildProfile(data: WorkspaceData) {
+      if (!profileCard) return;
+
+      const avatar = document.createElement("img");
+      avatar.className = "profile-avatar";
+      avatar.src = data.user.avatarUrl;
+      avatar.alt = `${data.user.login} 的 GitHub 头像`;
+
+      const text = document.createElement("div");
+      text.className = "profile-text";
+
+      const name = document.createElement("strong");
+      name.textContent = data.user.name || data.user.login;
+
+      const login = document.createElement("span");
+      login.textContent = `@${data.user.login}`;
+
+      const status = document.createElement("div");
+      status.className = "profile-status";
+
+      const dot = document.createElement("i");
+      const statusText = document.createElement("span");
+      statusText.textContent = "GitHub 已登录";
+
+      status.append(dot, statusText);
+      text.append(name, login, status);
+
+      profileCard.classList.remove("profile-loading");
+      profileCard.replaceChildren(avatar, text);
+    }
+
+    function updateConnection(data: WorkspaceData) {
+      if (data.connection.personalConnected) {
+        if (connectPanel) connectPanel.hidden = true;
+        if (connectedPanel) connectedPanel.hidden = false;
+
+        if (connectionDetail) {
+          connectionDetail.textContent =
+            data.connection.personalRepositorySelection === "all"
+              ? "当前 GitHub 账号已授权所有个人仓库"
+              : "当前 GitHub 账号已连接所选科研仓库";
+        }
+
+        if (manageLink) {
+          if (data.connection.manageUrl) {
+            manageLink.href = data.connection.manageUrl;
+            manageLink.hidden = false;
+          } else {
+            manageLink.hidden = true;
+          }
+        }
+      } else {
+        if (connectPanel) connectPanel.hidden = false;
+        if (connectedPanel) connectedPanel.hidden = true;
+      }
+
+      if (connectButton) {
+        connectButton.onclick = () => {
+          window.location.href = data.connection.connectUrl;
+        };
+      }
+    }
+
+    function updateCounts(data: WorkspaceData) {
+      const keys: TabName[] = ["mine", "shared", "projects"];
+
+      for (const key of keys) {
+        const value = String(data.counts[key]);
+        if (countElements[key]) {
+          countElements[key]!.textContent = value;
+        }
+        if (tabCountElements[key]) {
+          tabCountElements[key]!.textContent = value;
+        }
+      }
+    }
+
+    function createMetaChip(
+      text: string,
+      className = ""
+    ) {
+      const chip = document.createElement("span");
+      chip.className = `repo-chip ${className}`.trim();
+      chip.textContent = text;
+      return chip;
+    }
+
+    function createRepositoryRow(repo: Repository, index: number) {
+      const row = document.createElement("article");
+      const repoThemes = ["blue", "green", "orange", "purple", "cyan", "rose"];
+      row.className = `repository-row repo-theme-${repoThemes[index % repoThemes.length]}`;
+
+      const icon = document.createElement("div");
+      icon.className = repo.private
+        ? "repo-icon private-repo"
+        : "repo-icon public-repo";
+      icon.textContent = repo.private ? "锁" : "公";
+
+      const main = document.createElement("div");
+      main.className = "repo-main";
+
+      const heading = document.createElement("div");
+      heading.className = "repo-heading";
+
+      const title = document.createElement("h3");
+      title.textContent = repo.name;
+
+      const visibility = createMetaChip(
+        repo.private ? "Private" : "Public",
+        repo.private ? "chip-private" : "chip-public"
+      );
+
+      if (repo.archived) {
+        heading.append(
+          title,
+          visibility,
+          createMetaChip("Archived", "chip-muted")
+        );
+      } else {
+        heading.append(title, visibility);
+      }
+
+      const owner = document.createElement("div");
+      owner.className = "repo-owner";
+      owner.textContent = repo.fullName;
+
+      const description = document.createElement("p");
+      description.className = "repo-description";
+      description.textContent =
+        repo.description || "暂无仓库说明";
+
+      const meta = document.createElement("div");
+      meta.className = "repo-meta";
+
+      if (repo.language) {
+        meta.append(createMetaChip(repo.language));
+      }
+
+      meta.append(createMetaChip(roleLabel(repo.role)));
+      meta.append(
+        createMetaChip(`更新于 ${formatDate(repo.updatedAt)}`)
+      );
+
+      main.append(heading, owner, description, meta);
+
+      const action = document.createElement("a");
+      action.className = "repo-open-button";
+      action.href = repo.htmlUrl;
+      action.target = "_blank";
+      action.rel = "noopener noreferrer";
+      action.innerHTML = "打开 GitHub <span>→</span>";
+
+      row.append(icon, main, action);
+      return row;
+    }
+
+    function renderRepositories() {
+      if (!workspaceData || !repositoryList) return;
+
+      const source = workspaceData.repositories[activeTab] || [];
+      const query = searchText.trim().toLowerCase();
+
+      const filtered = query
+        ? source.filter((repo) => {
+            const haystack = [
+              repo.name,
+              repo.fullName,
+              repo.description,
+              repo.language || "",
+              repo.owner.login,
+            ]
+              .join(" ")
+              .toLowerCase();
+
+            return haystack.includes(query);
+          })
+        : source;
+
+      if (filtered.length === 0) {
+        if (emptyTitle) {
+          emptyTitle.textContent = query
+            ? "没有匹配的仓库"
+            : labels[activeTab].title + "暂为空";
+        }
+
+        if (emptyMessage) {
+          emptyMessage.textContent = query
+            ? "换个关键词试试。"
+            : labels[activeTab].empty;
+        }
+
+        showMainState(emptyBox);
+        return;
+      }
+
+      repositoryList.replaceChildren(
+        ...filtered.map((repo, index) => createRepositoryRow(repo, index))
+      );
+      showMainState(repositoryList);
+    }
+
+    function setActiveTab(tab: TabName) {
+      activeTab = tab;
+
+      for (
+        const button of document.querySelectorAll<HTMLButtonElement>(
+          ".workspace-tab"
+        )
+      ) {
+        const isActive = button.dataset.tab === tab;
+        button.classList.toggle("active", isActive);
+        button.setAttribute(
+          "aria-selected",
+          isActive ? "true" : "false"
+        );
+      }
+
+      renderRepositories();
+    }
+
+    async function loadWorkspace() {
+      showMainState(loading);
+
+      if (refreshButton) {
+        refreshButton.disabled = true;
+        refreshButton.textContent = "同步中…";
+      }
+
+      const session = getSessionToken();
+      if (!session) return;
+
+      try {
+        const api = new URL(`${AUTH_WORKER}/api/workspace`);
+        api.searchParams.set("return_to", window.location.href);
+
+        const response = await fetch(api.toString(), {
+          headers: {
+            Authorization: `Bearer ${session}`,
+          },
+          cache: "no-store",
+        });
+
+        if (response.status === 401) {
+          clearSession();
+          window.location.reload();
+          return;
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          if (errorMessage) {
+            errorMessage.textContent =
+              data.message || "读取工作区失败。";
+          }
+          showMainState(errorBox);
+          return;
+        }
+
+        workspaceData = data as WorkspaceData;
+        buildProfile(workspaceData);
+        updateConnection(workspaceData);
+        updateCounts(workspaceData);
+        renderRepositories();
+
+        const pageUrl = new URL(window.location.href);
+        if (pageUrl.searchParams.has("github_setup")) {
+          pageUrl.searchParams.delete("github_setup");
+          pageUrl.searchParams.delete("setup_action");
+          history.replaceState(
+            null,
+            "",
+            pageUrl.pathname + pageUrl.search
+          );
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (errorMessage) {
+          errorMessage.textContent =
+            "无法连接科研工作区服务，请检查 Worker 是否已部署最新版本。";
+        }
+        showMainState(errorBox);
+      } finally {
+        if (refreshButton) {
+          refreshButton.disabled = false;
+          refreshButton.textContent = "刷新";
+        }
+      }
+    }
+
+    for (
+      const button of document.querySelectorAll<HTMLButtonElement>(
+        ".workspace-tab"
+      )
+    ) {
+      button.addEventListener("click", () => {
+        const tab = button.dataset.tab as TabName;
+        if (tab) setActiveTab(tab);
+      });
+    }
+
+    searchInput?.addEventListener("input", () => {
+      searchText = searchInput.value;
+      renderRepositories();
+    });
+
+    refreshButton?.addEventListener("click", loadWorkspace);
+
+    loadWorkspace();
+  </script>
+
+  <style is:global>
+    .workspace-page {
+      padding-top: 46px;
+      padding-bottom: 72px;
+    }
+
+    .workspace-hero {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 34px;
+      margin-bottom: 28px;
+    }
+
+    .hero-copy {
+      max-width: 760px;
+    }
+
+    .hero-copy h1 {
+      margin: 13px 0 12px;
+      color: #172033;
+      font-size: clamp(34px, 5vw, 52px);
+      line-height: 1.08;
+      letter-spacing: -1.1px;
+    }
+
+    .hero-copy p {
+      max-width: 720px;
+      margin: 0;
+      color: #68758b;
+      font-size: 15px;
+      line-height: 1.85;
+    }
+
+    .profile-card {
+      display: flex;
+      min-width: 240px;
+      align-items: center;
+      gap: 13px;
+      padding: 15px 17px;
+      border: 1px solid #e1e7ef;
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 8px 24px rgba(33, 52, 82, .045);
+    }
+
+    .profile-avatar {
+      width: 46px;
+      height: 46px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+    }
+
+    .profile-text {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+    }
+
+    .profile-text strong {
+      overflow: hidden;
+      color: #253047;
+      font-size: 14px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .profile-text > span {
+      margin-top: 2px;
+      color: #8d98aa;
+      font-size: 12px;
+    }
+
+    .profile-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      color: #4c876b;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .profile-status i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #31b879;
+      box-shadow: 0 0 0 3px #e5f8ef;
+    }
+
+    .profile-loading {
+      min-height: 76px;
+    }
+
+    .profile-avatar-skeleton {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: #edf1f6;
+    }
+
+    .profile-lines {
+      display: flex;
+      width: 130px;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .profile-lines span {
+      height: 9px;
+      border-radius: 999px;
+      background: #edf1f6;
+    }
+
+    .profile-lines span:last-child {
+      width: 70%;
+    }
+
+    .connect-panel,
+    .connected-panel {
+      margin-bottom: 22px;
+      border-radius: 16px;
+    }
+
+    .connect-panel[hidden],
+    .connected-panel[hidden] {
+      display: none;
+    }
+
+    .connect-panel {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 22px;
+      padding: 22px 24px;
+      border: 1px solid #cfdcff;
+      background:
+        linear-gradient(100deg, #f4f7ff 0%, #ffffff 64%);
+      box-shadow: 0 9px 28px rgba(66, 93, 166, .05);
+    }
+
+    .connect-icon {
+      display: flex;
+      width: 54px;
+      height: 54px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 15px;
+      background: #24292f;
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: .4px;
+    }
+
+    .connect-eyebrow {
+      margin-bottom: 4px;
+      color: #5272ce;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .45px;
+    }
+
+    .connect-copy h2 {
+      margin: 0 0 6px;
+      color: #202b40;
+      font-size: 18px;
+    }
+
+    .connect-copy p {
+      max-width: 720px;
+      margin: 0;
+      color: #718096;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .connect-button {
+      display: inline-flex;
+      height: 44px;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 0 19px;
+      border: 0;
+      border-radius: 10px;
+      background: #24292f;
+      color: #ffffff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+      transition: transform .18s ease, background .18s ease;
+    }
+
+    .connect-button:hover {
+      transform: translateY(-1px);
+      background: #11161c;
+    }
+
+    .connected-panel {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 14px 17px;
+      border: 1px solid #d7eee2;
+      background: #f6fcf8;
+    }
+
+    .connected-main {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .connection-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #2db678;
+      box-shadow: 0 0 0 4px #ddf5e9;
+    }
+
+    .connected-main strong {
+      display: block;
+      color: #286b50;
+      font-size: 13px;
+    }
+
+    .connected-main p {
+      margin: 2px 0 0;
+      color: #6b8d7d;
+      font-size: 11px;
+    }
+
+    .manage-button {
+      padding: 8px 12px;
+      border: 1px solid #bee1ce;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #287153;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .manage-button[hidden] {
+      display: none;
+    }
+
+    .workspace-overview {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .metric-card {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 18px;
+      border: 1px solid #e1e6ee;
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 7px 22px rgba(34, 51, 84, .035);
+    }
+
+    .metric-icon {
+      display: flex;
+      width: 42px;
+      height: 42px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 11px;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .metric-mine .metric-icon {
+      background: #edf3ff;
+      color: #4269d5;
+    }
+
+    .metric-shared .metric-icon {
+      background: #eefaf6;
+      color: #218a67;
+    }
+
+    .metric-projects .metric-icon {
+      background: #fff4e8;
+      color: #d77618;
+    }
+
+    .metric-card span {
+      display: block;
+      color: #8490a2;
+      font-size: 12px;
+    }
+
+    .metric-card strong {
+      display: block;
+      margin-top: 2px;
+      color: #1c2739;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .workspace-browser {
+      overflow: hidden;
+      border: 1px solid #e1e6ee;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 14px 40px rgba(34, 51, 84, .045);
+    }
+
+    .browser-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #e9edf3;
+      background: #fafbfd;
+    }
+
+    .workspace-tabs {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid #e3e8ef;
+      border-radius: 11px;
+      background: #ffffff;
+    }
+
+    .workspace-tab {
+      display: inline-flex;
+      height: 34px;
+      align-items: center;
+      gap: 7px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #748095;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .workspace-tab span {
+      display: inline-flex;
+      min-width: 19px;
+      height: 19px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: #f0f2f6;
+      color: #8a94a4;
+      font-size: 10px;
+    }
+
+    .workspace-tab.active {
+      background: #253047;
+      color: #ffffff;
+    }
+
+    .workspace-tab.active span {
+      background: rgba(255,255,255,.14);
+      color: #ffffff;
+    }
+
+    .browser-actions {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .search-box {
+      display: flex;
+      height: 36px;
+      width: 230px;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid #dfe5ed;
+      border-radius: 9px;
+      background: #ffffff;
+    }
+
+    .search-symbol {
+      color: #a1aaba;
+      font-size: 17px;
+      line-height: 1;
+    }
+
+    .search-box input {
+      min-width: 0;
+      width: 100%;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: #263247;
+      font-size: 12px;
+    }
+
+    .refresh-button {
+      height: 36px;
+      padding: 0 13px;
+      border: 1px solid #dfe5ed;
+      border-radius: 9px;
+      background: #ffffff;
+      color: #536078;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .refresh-button:disabled {
+      cursor: wait;
+      opacity: .65;
+    }
+
+    .repository-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 14px;
+      background: #f7f9fc;
+    }
+
+    .repository-list[hidden],
+    .workspace-state[hidden] {
+      display: none;
+    }
+
+    .repository-row {
+      --repo-accent: #5b72f2;
+      --repo-soft: #f2f5ff;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 15px;
+      min-height: 112px;
+      padding: 17px;
+      border: 1px solid #e0e6ef;
+      border-left: 4px solid var(--repo-accent);
+      border-radius: 13px;
+      background: linear-gradient(90deg, var(--repo-soft) 0%, #ffffff 18%, #ffffff 100%);
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    }
+
+    .repository-row:hover {
+      transform: translateY(-1px);
+      border-color: #ccd7e5;
+      box-shadow: 0 8px 22px rgba(34,51,84,.055);
+    }
+
+    .repo-theme-blue { --repo-accent:#5b72f2; --repo-soft:#f1f4ff; }
+    .repo-theme-green { --repo-accent:#25b47e; --repo-soft:#effaf6; }
+    .repo-theme-orange { --repo-accent:#ef8b25; --repo-soft:#fff6ec; }
+    .repo-theme-purple { --repo-accent:#7659e8; --repo-soft:#f5f2ff; }
+    .repo-theme-cyan { --repo-accent:#159fb5; --repo-soft:#effafd; }
+    .repo-theme-rose { --repo-accent:#d85d82; --repo-soft:#fff2f6; }
+
+    .repo-icon {
+      display: flex;
+      width: 46px;
+      height: 46px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .private-repo {
+      background: #fff2ea;
+      color: #cf6c27;
+    }
+
+    .public-repo {
+      background: #eaf8ef;
+      color: #21845b;
+    }
+
+    .repo-main {
+      min-width: 0;
+    }
+
+    .repo-heading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .repo-heading h3 {
+      margin: 0;
+      overflow: hidden;
+      color: #1e293b;
+      font-size: 16px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .repo-owner {
+      margin-top: 3px;
+      color: #9aa4b3;
+      font-size: 11px;
+    }
+
+    .repo-description {
+      margin: 8px 0 10px;
+      overflow: hidden;
+      color: #67748a;
+      font-size: 12px;
+      line-height: 1.55;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .repo-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .repo-chip {
+      display: inline-flex;
+      min-height: 23px;
+      align-items: center;
+      padding: 0 8px;
+      border: 1px solid #e1e6ed;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #738095;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .chip-private {
+      border-color: #f1d3bf;
+      background: #fff6ef;
+      color: #bc682f;
+    }
+
+    .chip-public {
+      border-color: #cce8d8;
+      background: #f1faf5;
+      color: #307b59;
+    }
+
+    .chip-muted {
+      background: #f2f4f7;
+      color: #7d8797;
+    }
+
+    .repo-open-button {
+      display: inline-flex;
+      height: 38px;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 14px;
+      border: 1px solid #d9e1ec;
+      border-radius: 9px;
+      background: #ffffff;
+      color: #3f587e;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .repo-open-button:hover {
+      border-color: #b9c9df;
+      background: #f7faff;
+      color: #2d5fb4;
+    }
+
+    .workspace-state {
+      display: flex;
+      min-height: 330px;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 9px;
+      padding: 30px;
+      text-align: center;
+      color: #768399;
+    }
+
+    .workspace-state h2 {
+      margin: 5px 0 0;
+      color: #29354a;
+      font-size: 18px;
+    }
+
+    .workspace-state p {
+      max-width: 600px;
+      margin: 0;
+      line-height: 1.7;
+      font-size: 13px;
+    }
+
+    .state-icon {
+      display: flex;
+      width: 48px;
+      height: 48px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: #fff0f0;
+      color: #c84040;
+      font-weight: 900;
+    }
+
+    .empty-icon {
+      background: #eef3fb;
+      color: #5270a2;
+      font-size: 11px;
+    }
+
+    .loading-ring {
+      width: 29px;
+      height: 29px;
+      border: 3px solid #e3e9f1;
+      border-top-color: #4269d5;
+      border-radius: 50%;
+      animation: workspace-spin .8s linear infinite;
+    }
+
+    @keyframes workspace-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (max-width: 900px) {
+      .workspace-hero {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .profile-card {
+        width: 100%;
+      }
+
+      .connect-panel {
+        grid-template-columns: auto minmax(0, 1fr);
+      }
+
+      .connect-button {
+        grid-column: 1 / -1;
+        justify-self: flex-start;
+      }
+
+      .browser-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .browser-actions {
+        width: 100%;
+      }
+
+      .search-box {
+        width: 100%;
+        flex: 1;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .workspace-page {
+        padding-top: 30px;
+      }
+
+      .workspace-overview {
+        grid-template-columns: 1fr;
+      }
+
+      .connect-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .connect-icon {
+        width: 46px;
+        height: 46px;
+      }
+
+      .connect-steps {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .connect-steps i {
+        display: none;
+      }
+
+      .connected-panel {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .workspace-tabs {
+        width: 100%;
+        overflow-x: auto;
+      }
+
+      .workspace-tab {
+        flex: 1 0 auto;
+      }
+
+      .repository-row {
+        grid-template-columns: auto minmax(0, 1fr);
+      }
+
+      .repo-open-button {
+        grid-column: 2;
+        justify-self: flex-start;
+      }
+
+      .repo-description {
+        white-space: normal;
+      }
+    }
+  </style>
+</BaseLayout>

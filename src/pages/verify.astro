@@ -1,0 +1,34 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+const base = import.meta.env.BASE_URL;
+---
+<BaseLayout title="成员验证 | SYLU-ICDL">
+  <main id="verify-app" class="container member-verify-page" data-base={base}>
+    <section class="member-verify-card">
+      <div class="verify-kicker">成员验证</div><h1>完成身份绑定</h1><p class="verify-intro">输入管理员提供的邀请信息，即可开通对应权限。</p>
+      <div id="verify-account" class="verify-account" hidden><img id="verify-avatar" alt="GitHub 头像"/><div><strong id="verify-login">GitHub</strong><span>当前登录账号</span></div></div>
+      <form id="verify-form" class="verify-form" hidden>
+        <label><span>学号</span><input id="student-id" maxlength="32" autocomplete="off" required/></label>
+        <label><span>姓名</span><input id="person-name" maxlength="60" autocomplete="name" required/></label>
+        <label><span>一次性验证码</span><input id="registration-code" maxlength="40" autocomplete="one-time-code" required/></label>
+        <div id="verify-message" class="verify-message" hidden></div>
+        <button id="verify-submit" type="submit">确认并开通权限</button>
+      </form>
+      <div id="verify-loading" class="verify-loading">正在检查账号…</div>
+    </section>
+  </main>
+  <script>
+    import { buildGitHubLoginUrl,getCurrentUser,getSafeNextUrl,getSessionToken } from "../lib/auth";
+    const AUTH_WORKER="https://sylu-icdl-auth.hugozhao6.workers.dev"; const app=document.querySelector<HTMLElement>("#verify-app"); const base=app?.dataset.base||"/";
+    const form=document.querySelector<HTMLFormElement>("#verify-form"); const loading=document.querySelector<HTMLElement>("#verify-loading"); const account=document.querySelector<HTMLElement>("#verify-account"); const avatar=document.querySelector<HTMLImageElement>("#verify-avatar"); const login=document.querySelector<HTMLElement>("#verify-login"); const message=document.querySelector<HTMLElement>("#verify-message"); const submit=document.querySelector<HTMLButtonElement>("#verify-submit"); const sid=document.querySelector<HTMLInputElement>("#student-id"); const name=document.querySelector<HTMLInputElement>("#person-name"); const code=document.querySelector<HTMLInputElement>("#registration-code");
+    const params=new URLSearchParams(window.location.search); const nextUrl=getSafeNextUrl(params.get("next"),`${base}workspace`);
+    function msg(text:string,type:"error"|"success"){if(!message)return;message.hidden=false;message.className=`verify-message ${type}`;message.textContent=text;}
+    async function initialize(){const me=await getCurrentUser();if(!me){window.location.replace(buildGitHubLoginUrl(window.location.href));return;}if(me.access.authorized){window.location.replace(nextUrl);return;}if(me.access.status==="suspended"){if(loading){loading.textContent="当前账号已停用，请联系管理员。";}return;}if(avatar)avatar.src=me.user.avatarUrl;if(login)login.textContent=me.user.name||me.user.login;if(account)account.hidden=false;if(form)form.hidden=false;if(loading)loading.hidden=true;}
+    form?.addEventListener("submit",async(e)=>{e.preventDefault();const session=getSessionToken();if(!session||!sid||!name||!code)return;if(message)message.hidden=true;if(submit){submit.disabled=true;submit.textContent="正在验证…";}try{const r=await fetch(`${AUTH_WORKER}/api/registration/claim`,{method:"POST",headers:{Authorization:`Bearer ${session}`,"Content-Type":"application/json"},body:JSON.stringify({studentId:sid.value,name:name.value,code:code.value})});const data=await r.json();if(!r.ok){msg(data.message||"验证失败。","error");return;}msg("验证成功，正在进入平台。","success");setTimeout(()=>window.location.replace(nextUrl),400);}catch(error){console.error(error);msg("暂时无法完成验证，请稍后重试。","error");}finally{if(submit){submit.disabled=false;submit.textContent="确认并开通权限";}}}); initialize();
+  </script>
+  <style is:global>
+    .member-verify-page{padding:78px 0}.member-verify-card{width:min(560px,100%);margin:0 auto;padding:34px;border:1px solid #e1e7ef;border-radius:18px;background:#fff;box-shadow:0 18px 50px rgba(34,51,84,.07)}
+    .verify-kicker{margin-bottom:7px;color:#2563eb;font-size:12px;font-weight:800}.member-verify-card h1{margin:0 0 8px;font-size:29px}.verify-intro{margin:0;color:#78859a;line-height:1.7}.verify-account{display:flex;align-items:center;gap:12px;margin:24px 0 18px;padding:12px;border:1px solid #e5eaf1;border-radius:12px;background:#f8fafc}.verify-account[hidden],.verify-form[hidden],.verify-loading[hidden]{display:none}.verify-account img{width:38px;height:38px;border-radius:50%;object-fit:cover}.verify-account div{display:flex;flex-direction:column;gap:2px}.verify-account strong{font-size:14px}.verify-account span{color:#929cab;font-size:11px}
+    .verify-form{display:flex;flex-direction:column;gap:14px}.verify-form label{display:flex;flex-direction:column;gap:6px}.verify-form label span{color:#526078;font-size:12px;font-weight:800}.verify-form input{height:44px;padding:0 13px;border:1px solid #dce3ec;border-radius:10px;outline:none;background:#fbfcfe;font:inherit}.verify-form input:focus{border-color:#7da0f3;box-shadow:0 0 0 3px rgba(70,115,232,.1)}#verify-submit{height:46px;border:0;border-radius:10px;background:#2563eb;color:#fff;cursor:pointer;font-weight:800}#verify-submit:disabled{opacity:.65}.verify-message{padding:10px 12px;border-radius:9px;font-size:12px}.verify-message[hidden]{display:none}.verify-message.error{background:#fff4f4;color:#ab4141}.verify-message.success{background:#effbf4;color:#27764c}.verify-loading{margin-top:22px;color:#8a95a6;font-size:13px}
+  </style>
+</BaseLayout>

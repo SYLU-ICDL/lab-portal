@@ -1,0 +1,898 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="管理 | SYLU-ICDL" protectedPage={true} requiredRole="admin">
+  <main class="container admin-page">
+    <section class="admin-heading">
+      <div>
+        <div class="admin-kicker">平台管理</div>
+        <h1>成员与权限</h1>
+        <p>预注册新成员，并维护已验证账号的姓名与权限。</p>
+      </div>
+      <button id="refresh-admin" class="admin-secondary-button" type="button">刷新</button>
+    </section>
+
+    <section class="admin-summary">
+      <article><strong id="summary-pending">—</strong><span>待验证</span></article>
+      <article><strong id="summary-members">—</strong><span>已启用成员</span></article>
+      <article><strong id="summary-editors">—</strong><span>编辑者</span></article>
+      <article><strong id="summary-admins">—</strong><span>管理员</span></article>
+    </section>
+
+    <section class="admin-grid">
+      <article class="admin-panel admin-panel-stretch">
+        <div class="panel-heading">
+          <span>预注册</span>
+          <h2>新增成员</h2>
+        </div>
+
+        <form id="prereg-form" class="admin-form">
+          <label>
+            <span>学号</span>
+            <input id="pre-student-id" maxlength="32" required />
+          </label>
+
+          <label>
+            <span>姓名</span>
+            <input id="pre-name" maxlength="60" required />
+          </label>
+
+          <label>
+            <span>一次性验证码</span>
+            <div class="code-input-row">
+              <input id="pre-code" maxlength="40" required />
+              <button id="generate-code" type="button">生成</button>
+            </div>
+          </label>
+
+          <label>
+            <span>权限</span>
+            <select id="pre-role">
+              <option value="member">成员</option>
+              <option value="editor">编辑者</option>
+              <option value="admin">管理员</option>
+            </select>
+          </label>
+
+          <div id="prereg-message" class="admin-message" hidden></div>
+          <button id="prereg-submit" class="admin-primary-button" type="submit">添加预注册</button>
+        </form>
+      </article>
+
+      <article class="admin-panel admin-panel-stretch prereg-panel">
+        <div class="panel-heading panel-heading-row">
+          <div>
+            <span>邀请记录</span>
+            <h2>预注册成员</h2>
+          </div>
+          <div class="panel-count"><strong id="prereg-count">0</strong> 条</div>
+        </div>
+
+        <div class="panel-body-fill">
+          <div id="prereg-list" class="admin-list"></div>
+          <div id="prereg-empty" class="admin-empty admin-empty-fill" hidden>
+            <div class="empty-mark">＋</div>
+            <strong>暂无预注册成员</strong>
+            <span>新增成员后会显示在这里</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="admin-panel members-panel">
+      <div class="panel-heading panel-heading-row">
+        <div>
+          <span>账号权限</span>
+          <h2>已验证成员</h2>
+        </div>
+        <div class="panel-count"><strong id="member-count">0</strong> 人</div>
+      </div>
+
+      <div class="members-table-head">
+        <span>成员</span>
+        <span>权限</span>
+        <span>状态</span>
+        <span></span>
+      </div>
+
+      <div id="members-list" class="members-list"></div>
+      <div id="members-empty" class="admin-empty" hidden>暂无成员记录</div>
+    </section>
+
+    <div id="admin-loading" class="admin-loading">正在加载…</div>
+  </main>
+
+  <dialog id="edit-prereg-dialog" class="admin-dialog">
+    <form id="edit-prereg-form" class="admin-dialog-form">
+      <div class="dialog-kicker">预注册成员</div>
+      <h2>修改预注册</h2>
+      <input id="edit-prereg-id" type="hidden" />
+      <label><span>姓名</span><input id="edit-prereg-name" required /></label>
+      <label>
+        <span>权限</span>
+        <select id="edit-prereg-role">
+          <option value="member">成员</option>
+          <option value="editor">编辑者</option>
+          <option value="admin">管理员</option>
+        </select>
+      </label>
+      <label><span>重置验证码（可选）</span><input id="edit-prereg-code" placeholder="留空则保持不变" /></label>
+      <div class="admin-dialog-actions">
+        <button id="edit-prereg-cancel" type="button">取消</button>
+        <button type="submit" class="admin-primary-button">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="edit-member-dialog" class="admin-dialog">
+    <form id="edit-member-form" class="admin-dialog-form">
+      <div class="dialog-kicker">成员账号</div>
+      <h2>编辑成员</h2>
+      <input id="edit-member-id" type="hidden" />
+
+      <div class="member-account-card">
+        <strong id="edit-member-login">@github</strong>
+        <span>GitHub 账号</span>
+      </div>
+
+      <label>
+        <span>姓名</span>
+        <input id="edit-member-name" maxlength="60" required placeholder="请输入成员姓名" />
+      </label>
+
+      <label>
+        <span>学号</span>
+        <input id="edit-member-student" maxlength="32" pattern="[A-Za-z0-9_-]{4,32}" placeholder="请输入学号" />
+      </label>
+
+      <label>
+        <span>权限</span>
+        <select id="edit-member-role">
+          <option value="member">成员</option>
+          <option value="editor">编辑者</option>
+          <option value="admin">管理员</option>
+        </select>
+      </label>
+
+      <label>
+        <span>状态</span>
+        <select id="edit-member-status">
+          <option value="active">已启用</option>
+          <option value="suspended">已停用</option>
+        </select>
+      </label>
+
+      <div id="edit-member-message" class="admin-message" hidden></div>
+      <div class="admin-dialog-actions">
+        <button id="edit-member-cancel" type="button">取消</button>
+        <button id="edit-member-submit" type="submit" class="admin-primary-button">保存修改</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    import { getSessionToken } from "../lib/auth";
+
+    const AUTH_WORKER = "https://sylu-icdl-auth.hugozhao6.workers.dev";
+
+    type P = {
+      id: number;
+      student_id: string;
+      name: string;
+      role: string;
+      status: string;
+    };
+
+    type M = {
+      github_id: number;
+      github_login: string;
+      github_name?: string | null;
+      student_id?: string | null;
+      display_name?: string | null;
+      role: string;
+      status: string;
+    };
+
+    const $ = <T extends Element>(selector: string) => document.querySelector<T>(selector);
+
+    const preregList = $("#prereg-list") as HTMLElement | null;
+    const membersList = $("#members-list") as HTMLElement | null;
+    const preregEmpty = $("#prereg-empty") as HTMLElement | null;
+    const membersEmpty = $("#members-empty") as HTMLElement | null;
+    const loading = $("#admin-loading") as HTMLElement | null;
+    const preCount = $("#prereg-count") as HTMLElement | null;
+    const memCount = $("#member-count") as HTMLElement | null;
+
+    const sPending = $("#summary-pending") as HTMLElement | null;
+    const sMembers = $("#summary-members") as HTMLElement | null;
+    const sEditors = $("#summary-editors") as HTMLElement | null;
+    const sAdmins = $("#summary-admins") as HTMLElement | null;
+
+    const form = $("#prereg-form") as HTMLFormElement | null;
+    const sid = $("#pre-student-id") as HTMLInputElement | null;
+    const pname = $("#pre-name") as HTMLInputElement | null;
+    const pcode = $("#pre-code") as HTMLInputElement | null;
+    const prole = $("#pre-role") as HTMLSelectElement | null;
+    const pmsg = $("#prereg-message") as HTMLElement | null;
+    const psubmit = $("#prereg-submit") as HTMLButtonElement | null;
+    const gen = $("#generate-code") as HTMLButtonElement | null;
+    const refresh = $("#refresh-admin") as HTMLButtonElement | null;
+
+    const preregDialog = $("#edit-prereg-dialog") as HTMLDialogElement | null;
+    const preregEditForm = $("#edit-prereg-form") as HTMLFormElement | null;
+    const preregEditId = $("#edit-prereg-id") as HTMLInputElement | null;
+    const preregEditName = $("#edit-prereg-name") as HTMLInputElement | null;
+    const preregEditRole = $("#edit-prereg-role") as HTMLSelectElement | null;
+    const preregEditCode = $("#edit-prereg-code") as HTMLInputElement | null;
+    const preregEditCancel = $("#edit-prereg-cancel") as HTMLButtonElement | null;
+
+    const memberDialog = $("#edit-member-dialog") as HTMLDialogElement | null;
+    const memberEditForm = $("#edit-member-form") as HTMLFormElement | null;
+    const memberEditId = $("#edit-member-id") as HTMLInputElement | null;
+    const memberEditLogin = $("#edit-member-login") as HTMLElement | null;
+    const memberEditStudent = $("#edit-member-student") as HTMLInputElement | null;
+    const memberEditName = $("#edit-member-name") as HTMLInputElement | null;
+    const memberEditRole = $("#edit-member-role") as HTMLSelectElement | null;
+    const memberEditStatus = $("#edit-member-status") as HTMLSelectElement | null;
+    const memberEditMessage = $("#edit-member-message") as HTMLElement | null;
+    const memberEditCancel = $("#edit-member-cancel") as HTMLButtonElement | null;
+    const memberEditSubmit = $("#edit-member-submit") as HTMLButtonElement | null;
+
+    let preregs: P[] = [];
+    let members: M[] = [];
+
+    const roleRank: Record<string, number> = {
+      admin: 0,
+      editor: 1,
+      member: 2,
+    };
+
+    function roleLabel(value: string) {
+      return value === "admin" ? "管理员" : value === "editor" ? "编辑者" : "成员";
+    }
+
+    function statusLabel(value: string) {
+      if (value === "pending") return "待验证";
+      if (value === "claimed") return "已使用";
+      if (value === "revoked") return "已撤销";
+      if (value === "suspended") return "已停用";
+      return "已启用";
+    }
+
+    function memberName(member: M) {
+      const value = member.display_name?.trim() || member.github_name?.trim();
+      return value || member.github_login;
+    }
+
+    async function api(path: string, init: RequestInit = {}) {
+      const session = getSessionToken();
+      if (!session) throw new Error("登录状态已失效。");
+
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${session}`);
+      if (init.body) headers.set("Content-Type", "application/json");
+
+      const response = await fetch(`${AUTH_WORKER}${path}`, {
+        ...init,
+        headers,
+        cache: "no-store",
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "请求失败。");
+      return data;
+    }
+
+    function generateCode() {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const values = new Uint32Array(10);
+      crypto.getRandomValues(values);
+      return Array.from(values, (value) => chars[value % chars.length]).join("");
+    }
+
+    function renderPreregistrations() {
+      if (!preregList) return;
+      preregList.replaceChildren();
+      if (preCount) preCount.textContent = String(preregs.length);
+      if (preregEmpty) preregEmpty.hidden = preregs.length !== 0;
+
+      preregs.forEach((item) => {
+        const row = document.createElement("article");
+        row.className = `admin-list-row status-${item.status}`;
+
+        const main = document.createElement("div");
+        main.className = "admin-list-main";
+        const title = document.createElement("strong");
+        title.textContent = item.name;
+        const meta = document.createElement("span");
+        meta.textContent = `${item.student_id} · ${roleLabel(item.role)}`;
+        main.append(title, meta);
+
+        const state = document.createElement("span");
+        state.className = "status-pill";
+        state.textContent = statusLabel(item.status);
+
+        const actions = document.createElement("div");
+        actions.className = "row-actions";
+
+        if (item.status === "pending") {
+          const edit = document.createElement("button");
+          edit.type = "button";
+          edit.textContent = "编辑";
+          edit.addEventListener("click", () => openPreregEdit(item));
+
+          const revoke = document.createElement("button");
+          revoke.type = "button";
+          revoke.textContent = "撤销";
+          revoke.className = "danger-text-button";
+          revoke.addEventListener("click", () => revokePreregistration(item));
+
+          actions.append(edit, revoke);
+        }
+
+        row.append(main, state, actions);
+        preregList.append(row);
+      });
+    }
+
+    function renderMembers() {
+      if (!membersList) return;
+
+      const sorted = [...members].sort((a, b) => {
+        const roleDifference = (roleRank[a.role] ?? 9) - (roleRank[b.role] ?? 9);
+        if (roleDifference !== 0) return roleDifference;
+        return memberName(a).localeCompare(memberName(b), "zh-Hans-CN");
+      });
+
+      membersList.replaceChildren();
+      if (memCount) memCount.textContent = String(sorted.length);
+      if (membersEmpty) membersEmpty.hidden = sorted.length !== 0;
+
+      sorted.forEach((member) => {
+        const row = document.createElement("article");
+        row.className = "member-row";
+
+        const identity = document.createElement("div");
+        identity.className = "member-identity";
+
+        const title = document.createElement("strong");
+        title.textContent = memberName(member);
+
+        const meta = document.createElement("span");
+        const student = member.student_id ? `学号 ${member.student_id}` : "未填写学号";
+        meta.textContent = `${student} · @${member.github_login}`;
+        identity.append(title, meta);
+
+        const role = document.createElement("span");
+        role.className = `role-pill role-${member.role}`;
+        role.textContent = roleLabel(member.role);
+
+        const state = document.createElement("span");
+        state.className = member.status === "active" ? "member-state active" : "member-state suspended";
+        state.textContent = statusLabel(member.status);
+
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "member-edit-button";
+        edit.textContent = "编辑";
+        edit.addEventListener("click", () => openMemberEdit(member));
+
+        row.append(identity, role, state, edit);
+        membersList.append(row);
+      });
+    }
+
+    async function load() {
+      if (loading) loading.hidden = false;
+
+      try {
+        const data = await api("/api/admin");
+        preregs = data.preregistrations || [];
+        members = data.members || [];
+
+        if (sPending) sPending.textContent = String(data.summary?.pending ?? 0);
+        if (sMembers) sMembers.textContent = String(data.summary?.activeMembers ?? 0);
+        if (sEditors) sEditors.textContent = String(data.summary?.editors ?? 0);
+        if (sAdmins) sAdmins.textContent = String(data.summary?.admins ?? 0);
+
+        renderPreregistrations();
+        renderMembers();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "无法加载管理数据。");
+      } finally {
+        if (loading) loading.hidden = true;
+      }
+    }
+
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!sid || !pname || !pcode || !prole) return;
+
+      if (pmsg) pmsg.hidden = true;
+      if (psubmit) {
+        psubmit.disabled = true;
+        psubmit.textContent = "正在添加…";
+      }
+
+      try {
+        await api("/api/admin/preregistrations", {
+          method: "POST",
+          body: JSON.stringify({
+            studentId: sid.value,
+            name: pname.value,
+            code: pcode.value,
+            role: prole.value,
+          }),
+        });
+
+        if (pmsg) {
+          pmsg.hidden = false;
+          pmsg.className = "admin-message success";
+          pmsg.textContent = "已添加预注册成员。";
+        }
+
+        form.reset();
+        await load();
+      } catch (error) {
+        if (pmsg) {
+          pmsg.hidden = false;
+          pmsg.className = "admin-message error";
+          pmsg.textContent = error instanceof Error ? error.message : "添加失败。";
+        }
+      } finally {
+        if (psubmit) {
+          psubmit.disabled = false;
+          psubmit.textContent = "添加预注册";
+        }
+      }
+    });
+
+    gen?.addEventListener("click", () => {
+      if (pcode) pcode.value = generateCode();
+    });
+
+    function openPreregEdit(item: P) {
+      if (!preregDialog || !preregEditId || !preregEditName || !preregEditRole || !preregEditCode) return;
+      preregEditId.value = String(item.id);
+      preregEditName.value = item.name;
+      preregEditRole.value = item.role;
+      preregEditCode.value = "";
+      preregDialog.showModal();
+    }
+
+    preregEditCancel?.addEventListener("click", () => preregDialog?.close());
+
+    preregEditForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!preregEditId || !preregEditName || !preregEditRole || !preregEditCode) return;
+
+      try {
+        await api("/api/admin/preregistrations", {
+          method: "PUT",
+          body: JSON.stringify({
+            id: Number(preregEditId.value),
+            name: preregEditName.value,
+            role: preregEditRole.value,
+            code: preregEditCode.value || null,
+          }),
+        });
+        preregDialog?.close();
+        await load();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "修改失败。");
+      }
+    });
+
+    async function revokePreregistration(item: P) {
+      if (!confirm(`撤销“${item.name}”的预注册吗？`)) return;
+      try {
+        await api("/api/admin/preregistrations", {
+          method: "DELETE",
+          body: JSON.stringify({ id: item.id }),
+        });
+        await load();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "撤销失败。");
+      }
+    }
+
+    function openMemberEdit(member: M) {
+      if (!memberDialog || !memberEditId || !memberEditName || !memberEditStudent || !memberEditRole || !memberEditStatus) return;
+
+      memberEditId.value = String(member.github_id);
+      memberEditName.value = memberName(member);
+      memberEditStudent.value = member.student_id || "";
+      memberEditStudent.required = Boolean(member.student_id);
+      memberEditRole.value = member.role;
+      memberEditStatus.value = member.status;
+
+      if (memberEditLogin) memberEditLogin.textContent = `@${member.github_login}`;
+      if (memberEditMessage) memberEditMessage.hidden = true;
+
+      memberDialog.showModal();
+    }
+
+    memberEditCancel?.addEventListener("click", () => memberDialog?.close());
+
+    memberEditForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!memberEditId || !memberEditName || !memberEditStudent || !memberEditRole || !memberEditStatus) return;
+
+      if (memberEditSubmit) {
+        memberEditSubmit.disabled = true;
+        memberEditSubmit.textContent = "保存中…";
+      }
+      if (memberEditMessage) memberEditMessage.hidden = true;
+
+      try {
+        await api("/api/admin/members", {
+          method: "PUT",
+          body: JSON.stringify({
+            githubId: Number(memberEditId.value),
+            displayName: memberEditName.value,
+            studentId: memberEditStudent.value,
+            role: memberEditRole.value,
+            status: memberEditStatus.value,
+          }),
+        });
+
+        memberDialog?.close();
+        await load();
+      } catch (error) {
+        if (memberEditMessage) {
+          memberEditMessage.hidden = false;
+          memberEditMessage.className = "admin-message error";
+          memberEditMessage.textContent = error instanceof Error ? error.message : "保存失败。";
+        }
+      } finally {
+        if (memberEditSubmit) {
+          memberEditSubmit.disabled = false;
+          memberEditSubmit.textContent = "保存修改";
+        }
+      }
+    });
+
+    refresh?.addEventListener("click", load);
+    load();
+  </script>
+
+  <style is:global>
+    .admin-page { padding: 54px 0 80px; }
+
+    .admin-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .admin-kicker,
+    .panel-heading > span,
+    .panel-heading div > span,
+    .dialog-kicker {
+      color: #2563eb;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .admin-heading h1 { margin: 5px 0 7px; font-size: 34px; }
+    .admin-heading p { margin: 0; color: #78859a; }
+
+    .admin-secondary-button,
+    .admin-primary-button {
+      min-height: 40px;
+      padding: 0 16px;
+      border-radius: 9px;
+      cursor: pointer;
+      font-weight: 750;
+    }
+
+    .admin-secondary-button { border: 1px solid #dbe2eb; background: #fff; }
+    .admin-primary-button { border: 1px solid #2563eb; background: #2563eb; color: #fff; }
+    .admin-primary-button:disabled { opacity: .62; cursor: wait; }
+
+    .admin-summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .admin-summary article {
+      padding: 18px 20px;
+      border: 1px solid #e2e7ee;
+      border-radius: 14px;
+      background: #fff;
+    }
+
+    .admin-summary strong { display: block; font-size: 27px; }
+    .admin-summary span { color: #8a95a6; font-size: 12px; }
+
+    .admin-grid {
+      display: grid;
+      grid-template-columns: 390px minmax(0, 1fr);
+      gap: 18px;
+      margin-bottom: 18px;
+      align-items: stretch;
+    }
+
+    .admin-panel {
+      overflow: hidden;
+      border: 1px solid #e1e6ee;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 10px 32px rgba(34, 51, 84, .04);
+    }
+
+    .admin-panel-stretch {
+      display: flex;
+      min-height: 410px;
+      flex-direction: column;
+    }
+
+    .panel-body-fill {
+      display: flex;
+      min-height: 0;
+      flex: 1;
+      flex-direction: column;
+    }
+
+    .panel-heading {
+      padding: 20px 22px 16px;
+      border-bottom: 1px solid #edf0f4;
+    }
+
+    .panel-heading h2 { margin: 4px 0 0; font-size: 20px; }
+    .panel-heading-row { display: flex; justify-content: space-between; align-items: center; }
+    .panel-count { color: #929cab; font-size: 12px; }
+
+    .admin-form {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 13px;
+      padding: 20px 22px 23px;
+    }
+
+    .admin-form label,
+    .admin-dialog-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .admin-form label > span,
+    .admin-dialog-form label > span {
+      color: #536078;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .admin-form input,
+    .admin-form select,
+    .admin-dialog-form input,
+    .admin-dialog-form select {
+      height: 42px;
+      padding: 0 11px;
+      border: 1px solid #dce3ec;
+      border-radius: 9px;
+      outline: none;
+      background: #fbfcfe;
+      font: inherit;
+    }
+
+    .admin-form input:focus,
+    .admin-form select:focus,
+    .admin-dialog-form input:focus,
+    .admin-dialog-form select:focus {
+      border-color: #8ba8ef;
+      box-shadow: 0 0 0 3px rgba(65, 105, 225, .08);
+    }
+
+    .code-input-row { display: grid; grid-template-columns: 1fr 72px; gap: 8px; }
+    .code-input-row button { border: 1px solid #d8e0ea; border-radius: 9px; background: #fff; cursor: pointer; }
+    .admin-form > .admin-primary-button { margin-top: auto; }
+
+    .admin-message { padding: 9px 11px; border-radius: 8px; font-size: 12px; }
+    .admin-message[hidden] { display: none; }
+    .admin-message.success { background: #effbf4; color: #24764a; }
+    .admin-message.error { background: #fff4f4; color: #a94141; }
+
+    .admin-list {
+      padding: 10px 14px 14px;
+    }
+
+    .admin-list-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 13px;
+      padding: 13px 8px;
+      border-bottom: 1px solid #edf0f4;
+    }
+
+    .admin-list-row:last-child { border-bottom: 0; }
+    .admin-list-main, .member-identity { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+    .admin-list-main strong, .member-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .admin-list-main span, .member-identity span { color: #8a95a6; font-size: 11px; }
+
+    .status-pill {
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #eef4ff;
+      color: #456bd8;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .row-actions { display: flex; gap: 6px; }
+    .row-actions button,
+    .member-edit-button {
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid #dce3ec;
+      border-radius: 8px;
+      background: #fff;
+      color: #445168;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .row-actions button:hover,
+    .member-edit-button:hover { background: #f7f9fc; }
+    .danger-text-button { color: #bd4545 !important; border-color: #f0cccc !important; }
+
+    .admin-empty {
+      padding: 34px;
+      text-align: center;
+      color: #9aa4b2;
+      font-size: 12px;
+    }
+
+    .admin-empty-fill {
+      display: flex;
+      min-height: 250px;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .admin-empty-fill[hidden],
+    .admin-empty[hidden],
+    .admin-loading[hidden] { display: none; }
+
+    .empty-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      margin-bottom: 4px;
+      place-items: center;
+      border-radius: 12px;
+      background: #f1f5fb;
+      color: #738099;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .admin-empty-fill strong { color: #59667b; font-size: 13px; }
+
+    .members-panel { margin-bottom: 18px; }
+
+    .members-table-head {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) 110px 100px 72px;
+      gap: 16px;
+      padding: 11px 24px;
+      border-bottom: 1px solid #edf0f4;
+      background: #fafbfd;
+      color: #9aa4b2;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .members-list { padding: 0 16px 8px; }
+
+    .member-row {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) 110px 100px 72px;
+      align-items: center;
+      gap: 16px;
+      min-height: 70px;
+      padding: 12px 8px;
+      border-bottom: 1px solid #edf0f4;
+    }
+
+    .member-row:last-child { border-bottom: 0; }
+    .member-identity strong { color: #172033; font-size: 14px; }
+
+    .role-pill,
+    .member-state {
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .role-admin { background: #f1efff; color: #6b4fd1; }
+    .role-editor { background: #edf5ff; color: #356cc4; }
+    .role-member { background: #f1f5f8; color: #66758a; }
+    .member-state.active { background: #edf9f2; color: #258052; }
+    .member-state.suspended { background: #fff1f1; color: #b54d4d; }
+
+    .admin-loading { padding: 34px; text-align: center; color: #9aa4b2; font-size: 12px; }
+
+    .admin-dialog {
+      position: fixed;
+      inset: 0;
+      margin: auto;
+      width: min(480px, calc(100vw - 28px));
+      max-height: calc(100vh - 40px);
+      padding: 0;
+      overflow: auto;
+      border: 1px solid #e0e6ef;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 25px 80px rgba(18, 31, 55, .2);
+    }
+
+    .admin-dialog::backdrop { background: rgba(21, 32, 52, .43); backdrop-filter: blur(3px); }
+
+    .admin-dialog-form {
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+      padding: 25px;
+    }
+
+    .admin-dialog-form h2 { margin: 0 0 4px; color: #172033; }
+
+    .member-account-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 14px;
+      border: 1px solid #e5eaf1;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .member-account-card strong { color: #334155; }
+    .member-account-card span { color: #8a95a6; font-size: 11px; }
+
+    .admin-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+    .admin-dialog-actions > button:first-child {
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid #dce3ec;
+      border-radius: 9px;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    @media (max-width: 900px) {
+      .admin-grid { grid-template-columns: 1fr; }
+      .admin-summary { grid-template-columns: repeat(2, 1fr); }
+      .admin-panel-stretch { min-height: 0; }
+      .members-table-head { display: none; }
+      .member-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+      .member-edit-button { grid-column: 1 / -1; justify-self: start; }
+    }
+
+    @media (max-width: 620px) {
+      .admin-heading { align-items: flex-start; flex-direction: column; }
+      .admin-list-row { grid-template-columns: 1fr auto; }
+      .row-actions { grid-column: 1 / -1; }
+      .member-row { grid-template-columns: 1fr auto; }
+      .role-pill, .member-state { justify-self: start; }
+    }
+  </style>
+</BaseLayout>
