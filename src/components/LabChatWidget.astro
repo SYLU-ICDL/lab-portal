@@ -1,0 +1,917 @@
+---
+const base = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+---
+
+<div
+  id="lab-chat-root"
+  class="lab-chat-root"
+  data-review-url={`${base}admin/documents`}
+  hidden
+>
+  <section id="lab-chat-panel" class="lab-chat-panel" hidden aria-label="实验室消息">
+    <header class="lab-chat-header">
+      <div>
+        <span>团队协作</span>
+        <strong>实验室消息</strong>
+      </div>
+      <button id="lab-chat-close" class="lab-chat-icon-button" type="button" aria-label="关闭消息窗口">×</button>
+    </header>
+
+    <div class="lab-chat-tabs" role="tablist" aria-label="消息类型">
+      <button id="lab-chat-tab-public" type="button" class="is-active">公屏</button>
+      <button id="lab-chat-tab-direct" type="button">私聊</button>
+    </div>
+
+    <div id="lab-chat-direct-tools" class="lab-chat-direct-tools" hidden>
+      <label for="lab-chat-recipient">发送给</label>
+      <select id="lab-chat-recipient">
+        <option value="">选择成员</option>
+      </select>
+    </div>
+
+    <div id="lab-chat-note" class="lab-chat-note">所有成员可见 · 消息保留 7 天</div>
+
+    <div id="lab-chat-state" class="lab-chat-state">打开消息中心开始交流</div>
+    <div id="lab-chat-messages" class="lab-chat-messages" hidden></div>
+
+    <form id="lab-chat-form" class="lab-chat-form">
+      <textarea
+        id="lab-chat-input"
+        maxlength="1000"
+        rows="2"
+        placeholder="输入消息…"
+        aria-label="消息内容"
+      ></textarea>
+      <button id="lab-chat-send" type="submit">发送</button>
+    </form>
+  </section>
+
+  <button id="lab-chat-launcher" class="lab-chat-launcher" type="button" aria-label="打开实验室消息">
+    <span class="lab-chat-launcher-icon">讯</span>
+    <span>消息</span>
+    <strong id="lab-chat-unread" class="lab-chat-unread" hidden>0</strong>
+  </button>
+
+  <div id="lab-review-alert" class="lab-review-alert" hidden>
+    <a id="lab-review-open" href={`${base}admin/documents`}>
+      <span class="lab-review-dot"></span>
+      <span>待审核文档</span>
+      <strong id="lab-review-count">0</strong>
+    </a>
+    <button id="lab-review-dismiss" type="button" aria-label="暂时关闭审核提醒">×</button>
+  </div>
+</div>
+
+<script>
+  import {
+    clearSession,
+    getCurrentUser,
+    getSessionToken,
+  } from "../lib/auth";
+
+  const AUTH_WORKER =
+    "https://sylu-icdl-auth.hugozhao6.workers.dev";
+
+  type ChatContact = {
+    githubId: number;
+    login: string;
+    name: string;
+    role: string;
+    unread: number;
+  };
+
+  type ChatMessage = {
+    id: number;
+    senderId: number;
+    senderLogin: string;
+    senderName: string;
+    recipientId?: number;
+    recipientLogin?: string;
+    recipientName?: string;
+    content: string;
+    createdAt: string;
+    deliveredAt?: string | null;
+    expiresAt?: string | null;
+    mine: boolean;
+  };
+
+  const root =
+    document.querySelector<HTMLElement>("#lab-chat-root");
+  const panel =
+    document.querySelector<HTMLElement>("#lab-chat-panel");
+  const launcher =
+    document.querySelector<HTMLButtonElement>("#lab-chat-launcher");
+  const closeButton =
+    document.querySelector<HTMLButtonElement>("#lab-chat-close");
+  const unreadBadge =
+    document.querySelector<HTMLElement>("#lab-chat-unread");
+
+  const publicTab =
+    document.querySelector<HTMLButtonElement>("#lab-chat-tab-public");
+  const directTab =
+    document.querySelector<HTMLButtonElement>("#lab-chat-tab-direct");
+  const directTools =
+    document.querySelector<HTMLElement>("#lab-chat-direct-tools");
+  const recipientSelect =
+    document.querySelector<HTMLSelectElement>("#lab-chat-recipient");
+  const note =
+    document.querySelector<HTMLElement>("#lab-chat-note");
+  const state =
+    document.querySelector<HTMLElement>("#lab-chat-state");
+  const messagesBox =
+    document.querySelector<HTMLElement>("#lab-chat-messages");
+
+  const form =
+    document.querySelector<HTMLFormElement>("#lab-chat-form");
+  const input =
+    document.querySelector<HTMLTextAreaElement>("#lab-chat-input");
+  const sendButton =
+    document.querySelector<HTMLButtonElement>("#lab-chat-send");
+
+  const reviewAlert =
+    document.querySelector<HTMLElement>("#lab-review-alert");
+  const reviewCount =
+    document.querySelector<HTMLElement>("#lab-review-count");
+  const reviewDismiss =
+    document.querySelector<HTMLButtonElement>("#lab-review-dismiss");
+
+  let currentUser: Awaited<ReturnType<typeof getCurrentUser>> = null;
+  let mode: "public" | "direct" = "public";
+  let contacts: ChatContact[] = [];
+  let contactsLoaded = false;
+  let panelOpen = false;
+  let sending = false;
+  let reviewDismissed = false;
+  let viewPollTimer: number | null = null;
+  let statusPollTimer: number | null = null;
+
+  function setState(message: string) {
+    if (state) {
+      state.textContent = message;
+      state.hidden = false;
+    }
+    if (messagesBox) messagesBox.hidden = true;
+  }
+
+  function showMessages() {
+    if (state) state.hidden = true;
+    if (messagesBox) messagesBox.hidden = false;
+  }
+
+  function formatTime(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+
+  async function api(path: string, options: RequestInit = {}) {
+    const token = getSessionToken();
+    if (!token) throw new Error("登录状态已失效。");
+
+    const response = await fetch(`${AUTH_WORKER}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.headers || {}),
+      },
+    });
+
+    if (response.status === 401) {
+      clearSession();
+      if (root) root.hidden = true;
+      throw new Error("登录状态已失效。");
+    }
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || "请求失败。");
+    }
+    return data;
+  }
+
+  async function refreshStatus() {
+    if (!currentUser?.access?.authorized) return;
+
+    try {
+      const data = await api("/api/chat/status");
+      const unread = Number(data.unreadDirect || 0);
+
+      if (unreadBadge) {
+        unreadBadge.textContent = unread > 99 ? "99+" : String(unread);
+        unreadBadge.hidden = unread <= 0;
+      }
+
+      const pending = Number(data.pendingReviews || 0);
+      const showReview =
+        Boolean(currentUser.access.isAdmin) &&
+        pending > 0 &&
+        !reviewDismissed;
+
+      if (reviewCount) {
+        reviewCount.textContent = pending > 99 ? "99+" : String(pending);
+      }
+      if (reviewAlert) reviewAlert.hidden = !showReview;
+    } catch (error) {
+      console.error("Chat status error:", error);
+    }
+  }
+
+  function renderContacts() {
+    if (!recipientSelect) return;
+
+    const selected = recipientSelect.value;
+    recipientSelect.replaceChildren();
+
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent =
+      contacts.length > 0 ? "选择成员" : "暂无可联系成员";
+    recipientSelect.append(placeholder);
+
+    for (const contact of contacts) {
+      const option = document.createElement("option");
+      option.value = String(contact.githubId);
+      option.textContent =
+        contact.unread > 0
+          ? `${contact.name}（${contact.unread}）`
+          : contact.name;
+      recipientSelect.append(option);
+    }
+
+    if (
+      selected &&
+      contacts.some((item) => String(item.githubId) === selected)
+    ) {
+      recipientSelect.value = selected;
+    }
+  }
+
+  async function loadContacts(force = false) {
+    if (contactsLoaded && !force) return;
+
+    const data = await api("/api/chat/contacts");
+    contacts = Array.isArray(data.contacts) ? data.contacts : [];
+    contactsLoaded = true;
+    renderContacts();
+  }
+
+  function renderMessages(
+    items: ChatMessage[],
+    currentMode: "public" | "direct"
+  ) {
+    if (!messagesBox) return;
+
+    messagesBox.replaceChildren();
+
+    if (items.length === 0) {
+      setState(
+        currentMode === "public"
+          ? "还没有公屏消息"
+          : "还没有私聊消息"
+      );
+      return;
+    }
+
+    for (const item of items) {
+      const row = document.createElement("div");
+      row.className =
+        `lab-chat-message ${item.mine ? "is-mine" : "is-other"}`;
+
+      const meta = document.createElement("div");
+      meta.className = "lab-chat-message-meta";
+
+      const sender = document.createElement("strong");
+      sender.textContent = item.mine ? "我" : item.senderName;
+
+      const time = document.createElement("span");
+      time.textContent = formatTime(item.createdAt);
+
+      meta.append(sender, time);
+
+      const bubble = document.createElement("div");
+      bubble.className = "lab-chat-message-bubble";
+      bubble.textContent = item.content;
+
+      row.append(meta, bubble);
+      messagesBox.append(row);
+    }
+
+    showMessages();
+    messagesBox.scrollTop = messagesBox.scrollHeight;
+  }
+
+  async function loadPublic() {
+    setState("正在加载消息…");
+    try {
+      const data = await api("/api/chat/public");
+      renderMessages(
+        Array.isArray(data.messages) ? data.messages : [],
+        "public"
+      );
+    } catch (error) {
+      setState(error instanceof Error ? error.message : "暂时无法加载消息。");
+    }
+  }
+
+  async function loadDirect() {
+    const peer = Number(recipientSelect?.value || 0);
+
+    if (!peer) {
+      setState("请选择一位成员");
+      return;
+    }
+
+    setState("正在加载会话…");
+
+    try {
+      const data = await api(
+        `/api/chat/direct?peer=${encodeURIComponent(peer)}&receive=1`
+      );
+      renderMessages(
+        Array.isArray(data.messages) ? data.messages : [],
+        "direct"
+      );
+
+      await loadContacts(true);
+      if (recipientSelect) recipientSelect.value = String(peer);
+      await refreshStatus();
+    } catch (error) {
+      setState(error instanceof Error ? error.message : "暂时无法加载会话。");
+    }
+  }
+
+  async function refreshCurrentView() {
+    if (!panelOpen) return;
+    if (mode === "public") {
+      await loadPublic();
+    } else {
+      await loadDirect();
+    }
+  }
+
+  async function switchMode(next: "public" | "direct") {
+    mode = next;
+
+    publicTab?.classList.toggle("is-active", next === "public");
+    directTab?.classList.toggle("is-active", next === "direct");
+
+    if (directTools) directTools.hidden = next !== "direct";
+
+    if (note) {
+      note.textContent =
+        next === "public"
+          ? "所有成员可见 · 消息保留 7 天"
+          : "接收方打开会话后，消息保留 24 小时";
+    }
+
+    if (input) {
+      input.placeholder =
+        next === "public"
+          ? "发送到公屏…"
+          : "发送私聊消息…";
+    }
+
+    if (next === "direct") {
+      try {
+        await loadContacts();
+      } catch (error) {
+        setState(error instanceof Error ? error.message : "暂时无法加载成员。");
+        return;
+      }
+      await loadDirect();
+    } else {
+      await loadPublic();
+    }
+  }
+
+  async function openPanel() {
+    panelOpen = true;
+    if (panel) panel.hidden = false;
+    launcher?.classList.add("is-open");
+
+    await switchMode(mode);
+
+    if (viewPollTimer !== null) window.clearInterval(viewPollTimer);
+    viewPollTimer = window.setInterval(() => {
+      refreshCurrentView();
+    }, 15000);
+  }
+
+  function closePanel() {
+    panelOpen = false;
+    if (panel) panel.hidden = true;
+    launcher?.classList.remove("is-open");
+
+    if (viewPollTimer !== null) {
+      window.clearInterval(viewPollTimer);
+      viewPollTimer = null;
+    }
+  }
+
+  launcher?.addEventListener("click", () => {
+    if (panelOpen) closePanel();
+    else openPanel();
+  });
+
+  closeButton?.addEventListener("click", closePanel);
+
+  publicTab?.addEventListener("click", () => switchMode("public"));
+  directTab?.addEventListener("click", () => switchMode("direct"));
+
+  recipientSelect?.addEventListener("change", () => {
+    if (mode === "direct") loadDirect();
+  });
+
+  reviewDismiss?.addEventListener("click", () => {
+    reviewDismissed = true;
+    if (reviewAlert) reviewAlert.hidden = true;
+  });
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!input || !sendButton || sending) return;
+
+    const content = input.value.trim();
+    if (!content) return;
+
+    let recipientId = 0;
+    if (mode === "direct") {
+      recipientId = Number(recipientSelect?.value || 0);
+      if (!recipientId) {
+        setState("请先选择接收成员");
+        return;
+      }
+    }
+
+    sending = true;
+    sendButton.disabled = true;
+    sendButton.textContent = "发送中…";
+
+    try {
+      if (mode === "public") {
+        await api("/api/chat/public", {
+          method: "POST",
+          body: JSON.stringify({ content }),
+        });
+      } else {
+        await api("/api/chat/direct", {
+          method: "POST",
+          body: JSON.stringify({ recipientId, content }),
+        });
+      }
+
+      input.value = "";
+      await refreshCurrentView();
+      await refreshStatus();
+    } catch (error) {
+      setState(error instanceof Error ? error.message : "发送失败，请稍后重试。");
+    } finally {
+      sending = false;
+      sendButton.disabled = false;
+      sendButton.textContent = "发送";
+      input.focus();
+    }
+  });
+
+  input?.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.isComposing
+    ) {
+      event.preventDefault();
+      form?.requestSubmit();
+    }
+  });
+
+  async function initializeChat() {
+    try {
+      currentUser = await getCurrentUser();
+
+      if (!currentUser?.access?.authorized) return;
+
+      if (root) root.hidden = false;
+
+      await refreshStatus();
+
+      statusPollTimer = window.setInterval(() => {
+        refreshStatus();
+      }, 30000);
+    } catch (error) {
+      console.error("Chat initialization error:", error);
+    }
+  }
+
+  window.addEventListener("pagehide", () => {
+    if (viewPollTimer !== null) window.clearInterval(viewPollTimer);
+    if (statusPollTimer !== null) window.clearInterval(statusPollTimer);
+  });
+
+  initializeChat();
+</script>
+
+<style is:global>
+  .lab-chat-root[hidden],
+  .lab-chat-panel[hidden],
+  .lab-review-alert[hidden],
+  .lab-chat-state[hidden],
+  .lab-chat-messages[hidden],
+  .lab-chat-direct-tools[hidden],
+  .lab-chat-unread[hidden] {
+    display: none !important;
+  }
+
+  .lab-chat-root {
+    position: fixed;
+    left: 18px;
+    bottom: 18px;
+    z-index: 1200;
+    display: flex;
+    width: min(372px, calc(100vw - 36px));
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    pointer-events: none;
+  }
+
+  .lab-chat-root > * {
+    pointer-events: auto;
+  }
+
+  .lab-chat-panel {
+    display: flex;
+    width: 100%;
+    height: min(540px, calc(100vh - 150px));
+    overflow: hidden;
+    flex-direction: column;
+    border: 1px solid #dfe5ee;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .98);
+    box-shadow: 0 24px 70px rgba(26, 39, 66, .18);
+    backdrop-filter: blur(16px);
+    animation: lab-chat-enter 180ms cubic-bezier(.22, 1, .36, 1) both;
+  }
+
+  @keyframes lab-chat-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .lab-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 16px 13px;
+    border-bottom: 1px solid #edf0f4;
+  }
+
+  .lab-chat-header > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .lab-chat-header span {
+    color: #7b8799;
+    font-size: 10px;
+    font-weight: 800;
+  }
+
+  .lab-chat-header strong {
+    color: #172033;
+    font-size: 16px;
+  }
+
+  .lab-chat-icon-button {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    border-radius: 9px;
+    background: #f3f6fa;
+    color: #657187;
+    cursor: pointer;
+    font-size: 20px;
+  }
+
+  .lab-chat-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 10px 12px 0;
+    gap: 6px;
+  }
+
+  .lab-chat-tabs button {
+    height: 36px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    color: #78859a;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .lab-chat-tabs button.is-active {
+    border-color: #dce5fa;
+    background: #eef4ff;
+    color: #315fca;
+  }
+
+  .lab-chat-direct-tools {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px 0;
+  }
+
+  .lab-chat-direct-tools label {
+    color: #718096;
+    font-size: 11px;
+    font-weight: 750;
+  }
+
+  .lab-chat-direct-tools select {
+    min-width: 0;
+    height: 36px;
+    padding: 0 9px;
+    border: 1px solid #dce3ec;
+    border-radius: 9px;
+    outline: none;
+    background: #fbfcfe;
+    color: #334155;
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .lab-chat-note {
+    padding: 8px 14px 7px;
+    color: #98a2b1;
+    font-size: 10px;
+  }
+
+  .lab-chat-state {
+    display: grid;
+    min-height: 220px;
+    flex: 1;
+    place-items: center;
+    padding: 28px;
+    color: #9aa4b2;
+    text-align: center;
+    font-size: 12px;
+  }
+
+  .lab-chat-messages {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    padding: 10px 14px 14px;
+    overscroll-behavior: contain;
+  }
+
+  .lab-chat-message {
+    display: flex;
+    max-width: 84%;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .lab-chat-message.is-mine {
+    align-self: flex-end;
+    align-items: flex-end;
+  }
+
+  .lab-chat-message.is-other {
+    align-self: flex-start;
+    align-items: flex-start;
+  }
+
+  .lab-chat-message-meta {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 2px;
+    color: #9aa4b2;
+    font-size: 9px;
+  }
+
+  .lab-chat-message-meta strong {
+    color: #718096;
+    font-size: 10px;
+  }
+
+  .lab-chat-message-bubble {
+    padding: 9px 11px;
+    border: 1px solid #e4e9f0;
+    border-radius: 12px 12px 12px 4px;
+    background: #f6f8fb;
+    color: #28364d;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .lab-chat-message.is-mine .lab-chat-message-bubble {
+    border-color: #315fca;
+    border-radius: 12px 12px 4px 12px;
+    background: #315fca;
+    color: #fff;
+  }
+
+  .lab-chat-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid #edf0f4;
+    background: #fff;
+  }
+
+  .lab-chat-form textarea {
+    width: 100%;
+    max-height: 110px;
+    min-height: 42px;
+    resize: none;
+    padding: 10px 11px;
+    border: 1px solid #dce3ec;
+    border-radius: 10px;
+    outline: none;
+    background: #fbfcfe;
+    color: #25334a;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .lab-chat-form textarea:focus {
+    border-color: #8ba8ef;
+    box-shadow: 0 0 0 3px rgba(65, 105, 225, .08);
+  }
+
+  .lab-chat-form button {
+    height: 42px;
+    padding: 0 15px;
+    border: 1px solid #315fca;
+    border-radius: 10px;
+    background: #315fca;
+    color: #fff;
+    cursor: pointer;
+    font-weight: 800;
+  }
+
+  .lab-chat-form button:disabled {
+    opacity: .6;
+    cursor: wait;
+  }
+
+  .lab-review-alert {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    border: 1px solid #efb4b4;
+    border-radius: 12px;
+    background: #fff7f7;
+    box-shadow: 0 12px 34px rgba(114, 38, 38, .11);
+    overflow: hidden;
+  }
+
+  .lab-review-alert a {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    color: #a83b3b;
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .lab-review-alert a strong {
+    display: grid;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    place-items: center;
+    border-radius: 999px;
+    background: #d94b4b;
+    color: #fff;
+    font-size: 10px;
+  }
+
+  .lab-review-dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #d94b4b;
+    box-shadow: 0 0 0 4px rgba(217, 75, 75, .1);
+  }
+
+  .lab-review-alert > button {
+    width: 36px;
+    height: 36px;
+    margin-right: 4px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: #b76767;
+    cursor: pointer;
+    font-size: 18px;
+  }
+
+  .lab-chat-launcher {
+    position: relative;
+    display: inline-flex;
+    min-height: 46px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 15px 0 8px;
+    border: 1px solid #dce3ec;
+    border-radius: 14px;
+    background: #fff;
+    color: #35435a;
+    box-shadow: 0 12px 34px rgba(31, 46, 76, .14);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 850;
+  }
+
+  .lab-chat-launcher:hover,
+  .lab-chat-launcher.is-open {
+    transform: translateY(-1px);
+    border-color: #b9c9ef;
+    box-shadow: 0 15px 38px rgba(31, 46, 76, .17);
+  }
+
+  .lab-chat-launcher-icon {
+    display: grid;
+    width: 31px;
+    height: 31px;
+    place-items: center;
+    border-radius: 10px;
+    background: #315fca;
+    color: #fff;
+    font-size: 12px;
+  }
+
+  .lab-chat-unread {
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    display: grid;
+    min-width: 21px;
+    height: 21px;
+    padding: 0 5px;
+    place-items: center;
+    border: 2px solid #fff;
+    border-radius: 999px;
+    background: #df4f4f;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 900;
+  }
+
+  @media (max-width: 620px) {
+    .lab-chat-root {
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      width: auto;
+    }
+
+    .lab-chat-panel {
+      height: min(520px, calc(100vh - 120px));
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lab-chat-panel {
+      animation-duration: 1ms !important;
+    }
+  }
+</style>

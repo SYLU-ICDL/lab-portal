@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import LabChatWidget from "../components/LabChatWidget.astro";
 
 interface Props {
   title?: string;
@@ -44,6 +45,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
       </nav>
     </header>
     <div id="page-content"><slot /></div>
+    <LabChatWidget />
 
     <script>
       import { clearSession, getCurrentUser, hasRole, type AuthMe } from "../lib/auth";
