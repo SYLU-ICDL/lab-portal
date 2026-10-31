@@ -19,14 +19,14 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			</a>
 
 			<div class="editor-topbar-note">
-				修改将直接提交至 shared-docs
+				编辑模式
 			</div>
 		</div>
 
 		<div id="editor-loading" class="container editor-state-box">
 			<div class="loading-ring"></div>
 			<h1>正在载入编辑器</h1>
-			<p>正在获取 Markdown 正文与当前 GitHub 文件版本…</p>
+			<p>正在加载文档内容…</p>
 		</div>
 
 		<div
@@ -80,7 +80,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 
 			<div class="editor-grid">
 				<section class="editor-pane">
-					<div class="pane-title">Markdown</div>
+					<div class="pane-title">正文</div>
 
 					<textarea
 						id="markdown-editor"
@@ -296,7 +296,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 			}
 
 			if (saveState) {
-				saveState.textContent = "正在提交 GitHub";
+				saveState.textContent = "正在保存";
 			}
 
 			try {
@@ -349,14 +349,14 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 				}
 
 				setMessage(
-					"保存成功，GitHub 已生成新的 Commit。",
+					"保存成功。",
 					"success"
 				);
 			} catch (error) {
 				console.error(error);
 
 				setMessage(
-					"无法连接保存服务，请检查网络。",
+					"暂时无法保存，请检查网络后重试。",
 					"error"
 				);
 

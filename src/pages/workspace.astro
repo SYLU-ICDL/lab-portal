@@ -9,7 +9,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
   <main class="container workspace-page">
     <section class="workspace-hero">
       <div class="hero-copy">
-        <div class="protected-badge">GitHub 工作区</div>
+        <div class="protected-badge">科研协作</div>
         <h1>科研工作区</h1>
         <p>
           集中查看你的仓库、协作仓库和实验室科研项目。
@@ -36,7 +36,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         <div class="connect-eyebrow">首次连接</div>
         <h2>连接 GitHub 仓库</h2>
         <p>
-          选择需要接入的仓库即可，Public 与 Private 均支持。
+          选择需要接入的仓库即可。
         </p>
       </div>
 
@@ -58,7 +58,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       <div class="connected-main">
         <span class="connection-dot"></span>
         <div>
-          <strong>GitHub 已连接</strong>
+          <strong>仓库已连接</strong>
           <p id="connection-detail">仓库已同步</p>
         </div>
       </div>
@@ -401,8 +401,8 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         if (connectionDetail) {
           connectionDetail.textContent =
             data.connection.personalRepositorySelection === "all"
-              ? "当前 GitHub 账号已授权所有个人仓库"
-              : "当前 GitHub 账号已连接所选科研仓库";
+              ? "已接入全部可用仓库"
+              : "已接入所选仓库";
         }
 
         if (manageLink) {
@@ -642,7 +642,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
         if (errorMessage) {
           errorMessage.textContent =
-            "无法连接科研工作区服务，请检查 Worker 是否已部署最新版本。";
+            "科研工作区暂时无法加载，请稍后重试。";
         }
         showMainState(errorBox);
       } finally {

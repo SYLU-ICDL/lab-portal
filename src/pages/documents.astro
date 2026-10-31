@@ -39,7 +39,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
       <div id="documents-loading" class="documents-state">
         <div class="loading-ring" aria-hidden="true"></div>
-        <p>正在从 GitHub 私有仓库读取文档…</p>
+        <p>正在加载共享文档…</p>
       </div>
 
       <div id="documents-error" class="documents-state error-state" hidden>
@@ -68,7 +68,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             </button>
             <div class="category-kicker">共享文档</div>
             <h2 id="current-category-title">分类名称</h2>
-            <p id="current-category-description">分类中的 Markdown 文档</p>
+            <p id="current-category-description">分类中的文档</p>
           </div>
           <div class="category-actions">
             <button id="new-document-button" type="button" class="primary-action">
@@ -122,8 +122,8 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
   <dialog id="document-dialog" class="management-dialog document-dialog">
     <form id="document-form" class="dialog-form">
-      <div class="dialog-kicker">Markdown 文档</div>
-      <h2>新建 Markdown 文档</h2>
+      <div class="dialog-kicker">共享文档</div>
+      <h2>新建文档</h2>
       <p class="dialog-description">
         在 <strong id="new-document-target">当前分类</strong> 中创建新文档，创建后可继续在线编辑。
       </p>
@@ -136,7 +136,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         placeholder="例如：paper-guide"
         required
       />
-      <label for="document-markdown-input">Markdown 初始内容</label>
+      <label for="document-markdown-input">文档内容</label>
       <textarea
         id="document-markdown-input"
         name="markdown"
@@ -370,7 +370,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
       const badge = document.createElement("span");
       badge.className = "file-type-badge";
-      badge.textContent = "Markdown";
+      badge.textContent = "文档";
 
       const title = document.createElement("h3");
       title.className = "document-title";
@@ -426,7 +426,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         showRoot();
       } catch (error) {
         console.error(error);
-        showError(error instanceof Error ? error.message : "读取共享文档失败，请检查网络或 Worker 状态。");
+        showError(error instanceof Error ? error.message : "暂时无法加载共享文档，请稍后重试。");
       }
     }
 
@@ -501,7 +501,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
     async function deleteDocument(item: DocumentItem) {
       const confirmed = window.confirm(
-        `确定删除文档“${item.name}”吗？\n\n该操作会直接在 GitHub 仓库中删除文件并生成 Commit。`
+        `确定删除文档“${item.name}”吗？\n\n删除后无法通过网站恢复。`
       );
       if (!confirmed) return;
 
@@ -519,7 +519,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     async function deleteCurrentCategory() {
       if (!currentCategory || currentIsUncategorized) return;
       const confirmed = window.confirm(
-        `确定删除分类“${currentCategory}”及其中的全部 Markdown 文档吗？\n\n该操作会逐个删除 GitHub 文件并生成 Commit，无法通过网站直接撤销。`
+        `确定删除分类“${currentCategory}”及其中的全部文档吗？\n\n删除后无法通过网站恢复。`
       );
       if (!confirmed) return;
 

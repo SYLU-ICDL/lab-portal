@@ -402,3 +402,108 @@ button {
 		font-size: 12px;
 	}
 }
+
+
+/* SYLU-ICDL UX polish v1 */
+
+/*
+ * Native cross-document view transitions.
+ * Keeps Astro as a normal multi-page site, so existing authentication,
+ * document, and workspace scripts continue to initialize normally.
+ */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root) {
+  animation: sylu-page-out 140ms ease-out both;
+}
+
+::view-transition-new(root) {
+  animation: sylu-page-in 220ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes sylu-page-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes sylu-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+a,
+button {
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+button:not(:disabled):active,
+a.login-button:active,
+a.admin-nav-link:active {
+  transform: translateY(1px) scale(.99);
+}
+
+dialog[open] {
+  animation: sylu-dialog-in 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+dialog[open]::backdrop {
+  animation: sylu-backdrop-in 180ms ease both;
+}
+
+@keyframes sylu-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sylu-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  dialog[open],
+  dialog[open]::backdrop {
+    animation-duration: 1ms !important;
+  }
+
+  a,
+  button {
+    transition-duration: 1ms !important;
+  }
+}

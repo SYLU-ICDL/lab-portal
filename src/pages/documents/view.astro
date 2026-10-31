@@ -37,7 +37,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 		<div id="reader-loading" class="container reader-state">
 			<div class="loading-ring" aria-hidden="true"></div>
 			<h1>正在读取文档</h1>
-			<p>正在从 GitHub 私有仓库加载 Markdown 内容…</p>
+			<p>正在加载文档内容…</p>
 		</div>
 
 		<div
@@ -70,7 +70,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 					<div class="document-meta">
 						<span id="document-file-name"></span>
 						<span class="meta-divider">·</span>
-						<span>Markdown</span>
+						<span>在线文档</span>
 					</div>
 				</header>
 
@@ -335,7 +335,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
 
 				if (errorMessage) {
 					errorMessage.textContent =
-						"无法连接共享文档服务，请检查网络或 Worker 状态。";
+						"暂时无法加载文档，请稍后重试。";
 				}
 
 				showOnly(errorBox);
