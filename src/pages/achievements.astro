@@ -101,9 +101,10 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     const objectUrls = new Set<string>();
 
     function initials(name: string) {
-      const cleaned = name.trim();
-      if (!cleaned) return "研";
-      return cleaned.slice(0, 2);
+      const chars = Array.from(name.trim());
+      if (chars.length === 0) return "研";
+      if (chars.length <= 2) return chars.join("");
+      return chars.slice(-2).join("");
     }
 
     function avatarHue(name: string) {
@@ -156,6 +157,36 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       }
     }
 
+    function isWebResource(value: string) {
+      return /^https?:\/\//i.test(value.trim());
+    }
+
+    async function copyResource(value: string, button: HTMLButtonElement) {
+      const original = button.textContent || "复制";
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = value;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.append(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+        button.textContent = "已复制";
+        button.classList.add("is-copied");
+      } catch {
+        button.textContent = "复制失败";
+      }
+      window.setTimeout(() => {
+        button.textContent = original;
+        button.classList.remove("is-copied");
+      }, 1400);
+    }
+
     function openDetail(profile: Profile) {
       if (detailAvatar) void hydrateAvatar(detailAvatar, profile, "detail-avatar-image");
       if (detailYear) detailYear.textContent = `${profile.year} 届`;
@@ -187,16 +218,39 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
       if (linksList && linksSection) {
         const nodes = profile.links.map((item) => {
-          const a = document.createElement("a");
-          a.href = item.url;
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
+          const card = document.createElement("article");
+          card.className = "detail-resource-card";
+
+          const copy = document.createElement("div");
+          copy.className = "detail-resource-copy";
           const label = document.createElement("strong");
           label.textContent = item.label;
-          const arrow = document.createElement("span");
-          arrow.textContent = "↗";
-          a.append(label, arrow);
-          return a;
+          const value = document.createElement("code");
+          value.textContent = item.url;
+          value.title = item.url;
+          copy.append(label, value);
+
+          const actions = document.createElement("div");
+          actions.className = "detail-resource-actions";
+          const copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.className = "resource-copy-button";
+          copyButton.textContent = "复制";
+          copyButton.addEventListener("click", () => void copyResource(item.url, copyButton));
+          actions.append(copyButton);
+
+          if (isWebResource(item.url)) {
+            const open = document.createElement("a");
+            open.href = item.url;
+            open.target = "_blank";
+            open.rel = "noopener noreferrer";
+            open.className = "resource-open-button";
+            open.textContent = "打开 ↗";
+            actions.append(open);
+          }
+
+          card.append(copy, actions);
+          return card;
         });
         linksList.replaceChildren(...nodes);
         linksSection.hidden = nodes.length === 0;
@@ -345,27 +399,33 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     .achievements-state[hidden], .achievements-content[hidden] { display: none; }
     .achievements-spinner { width: 28px; height: 28px; border: 3px solid #e2e8f0; border-top-color: #315fca; border-radius: 50%; animation: ach-spin .8s linear infinite; }
     @keyframes ach-spin { to { transform: rotate(360deg); } }
-    .achievement-dialog { position: fixed; inset: 0; margin: auto; width: min(720px, calc(100vw - 34px)); max-height: calc(100vh - 40px); padding: 0; border: 1px solid #dfe5ee; border-radius: 20px; background: #fff; box-shadow: 0 28px 90px rgba(20,32,55,.24); }
+    .achievement-dialog { position: fixed; inset: 0; margin: auto; width: min(900px, calc(100vw - 34px)); max-height: calc(100vh - 40px); padding: 0; overflow: auto; border: 1px solid #dfe5ee; border-radius: 20px; background: #fff; box-shadow: 0 28px 90px rgba(20,32,55,.24); }
     .achievement-dialog::backdrop { background: rgba(22,32,50,.44); backdrop-filter: blur(4px); }
-    .achievement-detail { position: relative; display: grid; grid-template-columns: 96px minmax(0,1fr); gap: 23px; padding: 30px; }
+    .achievement-detail { position: relative; display: grid; grid-template-columns: 112px minmax(0,1fr); gap: 26px; padding: 34px 36px 36px; }
     .achievement-close { position: absolute; top: 15px; right: 15px; width: 34px; height: 34px; border: 0; border-radius: 10px; background: #f2f5f9; color: #66758a; cursor: pointer; font-size: 20px; }
-    .detail-avatar { width: 92px; height: 92px; }
+    .detail-avatar { width: 108px; height: 108px; }
     .detail-avatar-fallback { font-size: 25px; }
     .detail-year { color: #315fca; font-size: 11px; font-weight: 900; }
     .detail-copy h2 { margin: 4px 0 7px; color: #172033; font-size: 28px; }
     .detail-direction { margin: 0 0 13px; color: #66758a; line-height: 1.65; }
-    .detail-grid { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; }
+    .detail-grid { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
     .detail-section { padding: 18px; border: 1px solid #e4e9f0; border-radius: 13px; background: #fafbfd; }
     .detail-section[hidden] { display: none; }
     .detail-section h3 { margin: 0 0 12px; color: #45536a; font-size: 12px; }
-    .detail-contact-list { display: flex; flex-direction: column; gap: 9px; }
-    .detail-contact-list div { display: grid; grid-template-columns: 52px minmax(0,1fr); gap: 8px; font-size: 12px; }
+    .detail-contact-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+    .detail-contact-list div { display: grid; grid-template-columns: 52px minmax(0,1fr); gap: 8px; min-height: 42px; align-items: center; padding: 0 12px; border: 1px solid #e4e9f0; border-radius: 9px; background: #fff; font-size: 12px; }
     .detail-contact-list span { color: #9aa4b2; }
     .detail-contact-list a { overflow: hidden; color: #315fca; text-overflow: ellipsis; white-space: nowrap; }
-    .detail-links-list { display: flex; flex-direction: column; gap: 7px; }
-    .detail-links-list a { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 10px; padding: 0 11px; border: 1px solid #e1e6ed; border-radius: 9px; background: #fff; color: #45536a; font-size: 11px; }
-    .detail-links-list a:hover { border-color: #bdcae8; color: #315fca; }
+    .detail-links-list { display: flex; flex-direction: column; gap: 9px; }
+    .detail-resource-card { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 16px; padding: 13px 14px; border: 1px solid #e1e6ed; border-radius: 11px; background: #fff; }
+    .detail-resource-copy { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
+    .detail-resource-copy strong { color: #344158; font-size: 12px; }
+    .detail-resource-copy code { display: block; overflow-wrap: anywhere; white-space: pre-wrap; padding: 0; background: transparent; color: #65738a; font-family: Consolas, "SFMono-Regular", monospace; font-size: 11px; line-height: 1.6; }
+    .detail-resource-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+    .resource-copy-button, .resource-open-button { display: inline-flex; min-width: 60px; height: 34px; align-items: center; justify-content: center; padding: 0 10px; border: 1px solid #dce3ec; border-radius: 8px; background: #fff; color: #526078; cursor: pointer; font-size: 10px; font-weight: 800; }
+    .resource-copy-button:hover, .resource-open-button:hover { border-color: #b9c9ef; background: #f7f9ff; color: #315fca; }
+    .resource-copy-button.is-copied { border-color: #b8dfc6; background: #effaf3; color: #2f8051; }
     @media (max-width: 1080px) { .profile-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-    @media (max-width: 760px) { .achievements-shell { width: calc(100% - 28px); grid-template-columns: 1fr; gap: 14px; } .year-sidebar { position: sticky; top: 62px; z-index: 5; margin: 0 -2px; padding: 8px 0; background: rgba(246,248,251,.94); backdrop-filter: blur(10px); } .year-sidebar-title { display: none; } .year-nav { overflow-x: auto; flex-direction: row; } .year-nav a { flex: 0 0 auto; border-left: 0; border-bottom: 2px solid #dce2eb; } .year-nav a:hover, .year-nav a.is-active { border-left-color: transparent; border-bottom-color: #315fca; } .profile-grid { grid-template-columns: 1fr; } .achievement-detail { grid-template-columns: 72px minmax(0,1fr); padding: 24px; } .detail-avatar { width: 68px; height: 68px; } .detail-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { .achievements-shell { width: calc(100% - 28px); grid-template-columns: 1fr; gap: 14px; } .year-sidebar { position: sticky; top: 62px; z-index: 5; margin: 0 -2px; padding: 8px 0; background: rgba(246,248,251,.94); backdrop-filter: blur(10px); } .year-sidebar-title { display: none; } .year-nav { overflow-x: auto; flex-direction: row; } .year-nav a { flex: 0 0 auto; border-left: 0; border-bottom: 2px solid #dce2eb; } .year-nav a:hover, .year-nav a.is-active { border-left-color: transparent; border-bottom-color: #315fca; } .profile-grid { grid-template-columns: 1fr; } .achievement-detail { grid-template-columns: 72px minmax(0,1fr); padding: 24px; } .detail-avatar { width: 68px; height: 68px; } .detail-grid { display: flex; } .detail-contact-list { grid-template-columns: 1fr; } .detail-resource-card { grid-template-columns: 1fr; } .detail-resource-actions { justify-content: flex-end; } }
   </style>
 </BaseLayout>

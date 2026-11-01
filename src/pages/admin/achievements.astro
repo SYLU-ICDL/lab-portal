@@ -44,8 +44,9 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
       </div>
 
       <label>
-        <span>成果与资料链接（每行：名称 | URL）</span>
-        <textarea id="achievement-links" rows="5" placeholder="硕士学位论文 | https://...&#10;代码仓库 | https://..."></textarea>
+        <span>成果与资料（每行：名称 | 链接或路径）</span>
+        <textarea id="achievement-links" rows="5" placeholder="硕士学位论文 | https://...&#10;实验室服务器 | \\192.168.1.10\share\project&#10;本地归档 | D:\实验室资料\2025"></textarea>
+        <small class="achievement-resource-help">支持网页链接、网盘链接、Windows / Linux 路径以及局域网服务器路径。</small>
       </label>
 
       <label class="avatar-upload-label">
@@ -120,7 +121,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
         if (index < 0) return null;
         const label = line.slice(0, index).trim();
         const url = line.slice(index + 1).trim();
-        if (!label || !/^https?:\/\//i.test(url)) return null;
+        if (!label || !url) return null;
         return { label, url };
       }).filter((item): item is LinkItem => Boolean(item)).slice(0, 12);
     }
@@ -324,7 +325,7 @@ const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL :
     .achievement-admin-form label > span { color: #536078; font-size: 12px; font-weight: 750; }
     .achievement-admin-form input, .achievement-admin-form textarea { width: 100%; padding: 10px 11px; border: 1px solid #dce3ec; border-radius: 9px; outline: none; background: #fbfcfe; font: inherit; }
     .achievement-admin-form input:focus, .achievement-admin-form textarea:focus { border-color: #87a4eb; box-shadow: 0 0 0 3px rgba(49,95,202,.08); }
-    .avatar-upload-label small { color: #9aa4b2; font-size: 10px; }
+    .avatar-upload-label small, .achievement-resource-help { color: #9aa4b2; font-size: 10px; line-height: 1.55; }
     .remove-avatar-label { flex-direction: row !important; align-items: center; }
     .remove-avatar-label[hidden] { display: none !important; }
     .remove-avatar-label input { width: auto; }
