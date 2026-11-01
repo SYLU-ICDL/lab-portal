@@ -1,0 +1,336 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+
+<BaseLayout title="成果管理 | SYLU-ICDL" protectedPage={true} requiredRole="admin">
+  <main class="container achievement-admin-page">
+    <section class="achievement-admin-heading">
+      <div>
+        <a class="achievement-admin-back" href={`${base}admin`}>← 返回管理</a>
+        <div class="achievement-admin-kicker">平台管理</div>
+        <h1>成果管理</h1>
+        <p>维护历届研究成果档案，保存后同步写入 GitHub Markdown 存档。</p>
+      </div>
+      <div class="achievement-admin-actions">
+        <a class="achievement-secondary" href={`${base}achievements`}>查看成果页</a>
+        <button id="achievement-new" class="achievement-primary" type="button">新增档案</button>
+      </div>
+    </section>
+
+    <div id="achievement-admin-loading" class="achievement-admin-state">正在加载成果档案…</div>
+    <div id="achievement-admin-error" class="achievement-admin-state error" hidden></div>
+    <div id="achievement-admin-empty" class="achievement-admin-state" hidden>暂无成果档案</div>
+    <div id="achievement-admin-content" class="achievement-admin-content" hidden></div>
+  </main>
+
+  <dialog id="achievement-form-dialog" class="achievement-admin-dialog">
+    <form id="achievement-form" class="achievement-admin-form">
+      <div class="achievement-admin-kicker">成果档案</div>
+      <h2 id="achievement-form-title">新增档案</h2>
+      <input id="achievement-id" type="hidden" />
+
+      <div class="achievement-form-grid">
+        <label><span>届别年份</span><input id="achievement-year" type="number" min="1900" max="2100" required /></label>
+        <label><span>姓名</span><input id="achievement-name" maxlength="60" required /></label>
+      </div>
+
+      <label><span>研究方向</span><textarea id="achievement-direction" rows="3" maxlength="240"></textarea></label>
+      <label><span>关键词（最多 6 个，用逗号或分号分隔）</span><input id="achievement-keywords" maxlength="240" placeholder="强化学习；路径规划；多智能体" /></label>
+
+      <div class="achievement-form-grid">
+        <label><span>邮箱</span><input id="achievement-email" maxlength="160" /></label>
+        <label><span>电话</span><input id="achievement-phone" maxlength="80" /></label>
+      </div>
+
+      <label>
+        <span>成果与资料链接（每行：名称 | URL）</span>
+        <textarea id="achievement-links" rows="5" placeholder="硕士学位论文 | https://...&#10;代码仓库 | https://..."></textarea>
+      </label>
+
+      <label class="avatar-upload-label">
+        <span>头像（可选）</span>
+        <input id="achievement-avatar" type="file" accept="image/png,image/jpeg,image/webp" />
+        <small>上传时会自动裁剪压缩为 512×512；不上传则使用姓名自动头像。</small>
+      </label>
+
+      <label id="achievement-remove-avatar-label" class="remove-avatar-label" hidden>
+        <input id="achievement-remove-avatar" type="checkbox" />
+        <span>移除当前头像，恢复姓名自动头像</span>
+      </label>
+
+      <div id="achievement-form-error" class="achievement-form-error" hidden></div>
+      <div class="achievement-dialog-actions">
+        <button id="achievement-form-cancel" type="button" class="achievement-secondary">取消</button>
+        <button id="achievement-form-submit" type="submit" class="achievement-primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    import { clearSession, getSessionToken } from "../../lib/auth";
+    const AUTH_WORKER = "https://sylu-icdl-auth.hugozhao6.workers.dev";
+
+    type LinkItem = { label: string; url: string };
+    type Profile = { id: string; year: number; name: string; direction: string; keywords: string[]; avatarPath?: string; email?: string; phone?: string; links: LinkItem[]; };
+    type Cohort = { year: number; profiles: Profile[] };
+
+    const loading = document.querySelector<HTMLElement>("#achievement-admin-loading");
+    const errorBox = document.querySelector<HTMLElement>("#achievement-admin-error");
+    const emptyBox = document.querySelector<HTMLElement>("#achievement-admin-empty");
+    const content = document.querySelector<HTMLElement>("#achievement-admin-content");
+    const newButton = document.querySelector<HTMLButtonElement>("#achievement-new");
+    const dialog = document.querySelector<HTMLDialogElement>("#achievement-form-dialog");
+    const form = document.querySelector<HTMLFormElement>("#achievement-form");
+    const formTitle = document.querySelector<HTMLElement>("#achievement-form-title");
+    const idInput = document.querySelector<HTMLInputElement>("#achievement-id");
+    const yearInput = document.querySelector<HTMLInputElement>("#achievement-year");
+    const nameInput = document.querySelector<HTMLInputElement>("#achievement-name");
+    const directionInput = document.querySelector<HTMLTextAreaElement>("#achievement-direction");
+    const keywordsInput = document.querySelector<HTMLInputElement>("#achievement-keywords");
+    const emailInput = document.querySelector<HTMLInputElement>("#achievement-email");
+    const phoneInput = document.querySelector<HTMLInputElement>("#achievement-phone");
+    const linksInput = document.querySelector<HTMLTextAreaElement>("#achievement-links");
+    const avatarInput = document.querySelector<HTMLInputElement>("#achievement-avatar");
+    const removeAvatarLabel = document.querySelector<HTMLElement>("#achievement-remove-avatar-label");
+    const removeAvatar = document.querySelector<HTMLInputElement>("#achievement-remove-avatar");
+    const formError = document.querySelector<HTMLElement>("#achievement-form-error");
+    const cancelButton = document.querySelector<HTMLButtonElement>("#achievement-form-cancel");
+    const submitButton = document.querySelector<HTMLButtonElement>("#achievement-form-submit");
+
+    let cohorts: Cohort[] = [];
+    let activeProfile: Profile | null = null;
+
+    async function api(path: string, init: RequestInit = {}) {
+      const session = getSessionToken();
+      if (!session) throw new Error("登录状态已失效。");
+      const headers = new Headers(init.headers || {});
+      headers.set("Authorization", `Bearer ${session}`);
+      if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      const response = await fetch(`${AUTH_WORKER}${path}`, { ...init, headers, cache: "no-store" });
+      if (response.status === 401) { clearSession(); window.location.reload(); throw new Error("登录状态已失效。"); }
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "请求失败。");
+      return data;
+    }
+
+    function parseLinks(value: string) {
+      return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const index = line.indexOf("|");
+        if (index < 0) return null;
+        const label = line.slice(0, index).trim();
+        const url = line.slice(index + 1).trim();
+        if (!label || !/^https?:\/\//i.test(url)) return null;
+        return { label, url };
+      }).filter((item): item is LinkItem => Boolean(item)).slice(0, 12);
+    }
+
+    function setMain(target: HTMLElement | null) {
+      for (const el of [loading, errorBox, emptyBox, content]) if (el) el.hidden = el !== target;
+    }
+
+    function render() {
+      if (!content) return;
+      content.replaceChildren();
+      for (const cohort of cohorts) {
+        const section = document.createElement("section");
+        section.className = "admin-cohort";
+        const heading = document.createElement("div");
+        heading.className = "admin-cohort-heading";
+        heading.innerHTML = `<strong>${cohort.year} 届</strong><span>${cohort.profiles.length} 人</span>`;
+        const list = document.createElement("div");
+        list.className = "admin-profile-list";
+        cohort.profiles.forEach((profile) => {
+          const row = document.createElement("div");
+          row.className = "admin-profile-row";
+          const main = document.createElement("div");
+          main.className = "admin-profile-main";
+          const name = document.createElement("strong");
+          name.textContent = profile.name;
+          const direction = document.createElement("span");
+          direction.textContent = profile.direction || "研究方向待补充";
+          main.append(name, direction);
+          const tags = document.createElement("div");
+          tags.className = "admin-profile-tags";
+          profile.keywords.slice(0, 6).forEach((keyword) => { const tag = document.createElement("span"); tag.textContent = keyword; tags.append(tag); });
+          const actions = document.createElement("div");
+          actions.className = "admin-profile-actions";
+          const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "编辑"; edit.addEventListener("click", () => openEdit(profile));
+          const del = document.createElement("button"); del.type = "button"; del.className = "danger"; del.textContent = "删除"; del.addEventListener("click", () => deleteProfile(profile));
+          actions.append(edit, del);
+          row.append(main, tags, actions);
+          list.append(row);
+        });
+        section.append(heading, list);
+        content.append(section);
+      }
+    }
+
+    async function load() {
+      setMain(loading);
+      try {
+        const data = await api("/api/achievements");
+        cohorts = Array.isArray(data.cohorts) ? data.cohorts : [];
+        if (cohorts.length === 0) setMain(emptyBox);
+        else { render(); setMain(content); }
+      } catch (error) {
+        if (errorBox) errorBox.textContent = error instanceof Error ? error.message : "加载失败。";
+        setMain(errorBox);
+      }
+    }
+
+    function resetForm() {
+      form?.reset();
+      activeProfile = null;
+      if (idInput) idInput.value = "";
+      if (removeAvatarLabel) removeAvatarLabel.hidden = true;
+      if (removeAvatar) removeAvatar.checked = false;
+      if (formError) formError.hidden = true;
+    }
+
+    function openNew() {
+      resetForm();
+      if (formTitle) formTitle.textContent = "新增成果档案";
+      if (yearInput) yearInput.value = String(new Date().getFullYear());
+      dialog?.showModal();
+      nameInput?.focus();
+    }
+
+    function openEdit(profile: Profile) {
+      resetForm();
+      activeProfile = profile;
+      if (formTitle) formTitle.textContent = "编辑成果档案";
+      if (idInput) idInput.value = profile.id;
+      if (yearInput) yearInput.value = String(profile.year);
+      if (nameInput) nameInput.value = profile.name;
+      if (directionInput) directionInput.value = profile.direction || "";
+      if (keywordsInput) keywordsInput.value = profile.keywords.join("；");
+      if (emailInput) emailInput.value = profile.email || "";
+      if (phoneInput) phoneInput.value = profile.phone || "";
+      if (linksInput) linksInput.value = profile.links.map((item) => `${item.label} | ${item.url}`).join("\n");
+      if (removeAvatarLabel) removeAvatarLabel.hidden = !profile.avatarPath;
+      dialog?.showModal();
+      nameInput?.focus();
+    }
+
+    function fileToCanvasJpeg(file: File) {
+      return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("无法读取头像。"));
+        reader.onload = () => {
+          const img = new Image();
+          img.onerror = () => reject(new Error("无法解析头像。"));
+          img.onload = () => {
+            const size = 512;
+            const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext("2d"); if (!ctx) { reject(new Error("浏览器无法处理头像。")); return; }
+            const scale = Math.max(size / img.width, size / img.height);
+            const width = img.width * scale; const height = img.height * scale;
+            ctx.drawImage(img, (size - width) / 2, (size - height) / 2, width, height);
+            const data = canvas.toDataURL("image/jpeg", .84);
+            resolve(data.split(",")[1] || "");
+          };
+          img.src = String(reader.result || "");
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!yearInput || !nameInput || !submitButton) return;
+      if (formError) formError.hidden = true;
+      submitButton.disabled = true; submitButton.textContent = "保存中…";
+      try {
+        const payload = {
+          id: idInput?.value || undefined,
+          year: Number(yearInput.value),
+          name: nameInput.value,
+          direction: directionInput?.value || "",
+          keywords: (keywordsInput?.value || "").split(/[；;,，]/).map((item) => item.trim()).filter(Boolean).slice(0, 6),
+          email: emailInput?.value || "",
+          phone: phoneInput?.value || "",
+          links: parseLinks(linksInput?.value || ""),
+        };
+        const data = await api("/api/admin/achievements/profile", { method: activeProfile ? "PUT" : "POST", body: JSON.stringify(payload) });
+        const id = data.profile?.id || payload.id;
+        if (!id) throw new Error("档案 ID 获取失败。");
+
+        if (removeAvatar?.checked && activeProfile?.avatarPath) {
+          await api("/api/admin/achievements/avatar", { method: "DELETE", body: JSON.stringify({ id }) });
+        }
+        const file = avatarInput?.files?.[0];
+        if (file) {
+          const base64 = await fileToCanvasJpeg(file);
+          await api("/api/admin/achievements/avatar", { method: "POST", body: JSON.stringify({ id, base64 }) });
+        }
+
+        dialog?.close();
+        await load();
+      } catch (error) {
+        if (formError) { formError.hidden = false; formError.textContent = error instanceof Error ? error.message : "保存失败。"; }
+      } finally {
+        submitButton.disabled = false; submitButton.textContent = "保存";
+      }
+    });
+
+    async function deleteProfile(profile: Profile) {
+      if (!confirm(`确定删除“${profile.name}”的成果档案吗？\n\n该操作会更新对应届别 Markdown 文件。`)) return;
+      try {
+        await api("/api/admin/achievements/profile", { method: "DELETE", body: JSON.stringify({ id: profile.id }) });
+        await load();
+      } catch (error) { alert(error instanceof Error ? error.message : "删除失败。"); }
+    }
+
+    newButton?.addEventListener("click", openNew);
+    cancelButton?.addEventListener("click", () => dialog?.close());
+    load();
+  </script>
+
+  <style is:global>
+    .achievement-admin-page { padding: 48px 0 80px; }
+    .achievement-admin-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+    .achievement-admin-back { display: inline-block; margin-bottom: 14px; color: #718096; font-size: 12px; font-weight: 750; }
+    .achievement-admin-kicker { color: #315fca; font-size: 11px; font-weight: 900; }
+    .achievement-admin-heading h1 { margin: 5px 0 7px; font-size: 34px; }
+    .achievement-admin-heading p { margin: 0; color: #78859a; }
+    .achievement-admin-actions { display: flex; gap: 8px; }
+    .achievement-primary, .achievement-secondary { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; padding: 0 15px; border-radius: 9px; cursor: pointer; font-weight: 750; }
+    .achievement-primary { border: 1px solid #315fca; background: #315fca; color: #fff; }
+    .achievement-secondary { border: 1px solid #dbe2eb; background: #fff; color: #536078; }
+    .achievement-admin-content { display: flex; flex-direction: column; gap: 17px; }
+    .achievement-admin-content[hidden], .achievement-admin-state[hidden] { display: none; }
+    .admin-cohort { overflow: hidden; border: 1px solid #e1e6ee; border-radius: 15px; background: #fff; }
+    .admin-cohort-heading { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #edf0f4; }
+    .admin-cohort-heading strong { font-size: 17px; }
+    .admin-cohort-heading span { color: #9aa4b2; font-size: 11px; }
+    .admin-profile-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(220px,.8fr) auto; align-items: center; gap: 16px; min-height: 72px; padding: 13px 20px; border-bottom: 1px solid #edf0f4; }
+    .admin-profile-row:last-child { border-bottom: 0; }
+    .admin-profile-main { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+    .admin-profile-main strong { color: #172033; }
+    .admin-profile-main span { overflow: hidden; color: #7f8b9d; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .admin-profile-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+    .admin-profile-tags span { padding: 4px 7px; border-radius: 999px; background: #f1f4f8; color: #718096; font-size: 9px; }
+    .admin-profile-actions { display: flex; gap: 6px; }
+    .admin-profile-actions button { height: 34px; padding: 0 11px; border: 1px solid #dce3ec; border-radius: 8px; background: #fff; cursor: pointer; color: #4c596e; font-weight: 750; }
+    .admin-profile-actions button.danger { border-color: #f0cccc; color: #bd4545; }
+    .achievement-admin-state { padding: 60px; text-align: center; color: #8a95a6; }
+    .achievement-admin-dialog { position: fixed; inset: 0; margin: auto; width: min(660px,calc(100vw - 30px)); max-height: calc(100vh - 38px); padding: 0; overflow: auto; border: 1px solid #dfe5ee; border-radius: 18px; background: #fff; box-shadow: 0 28px 90px rgba(20,32,55,.22); }
+    .achievement-admin-dialog::backdrop { background: rgba(21,31,50,.44); backdrop-filter: blur(4px); }
+    .achievement-admin-form { display: flex; flex-direction: column; gap: 13px; padding: 26px; }
+    .achievement-admin-form h2 { margin: 0 0 4px; }
+    .achievement-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .achievement-admin-form label { display: flex; flex-direction: column; gap: 6px; }
+    .achievement-admin-form label > span { color: #536078; font-size: 12px; font-weight: 750; }
+    .achievement-admin-form input, .achievement-admin-form textarea { width: 100%; padding: 10px 11px; border: 1px solid #dce3ec; border-radius: 9px; outline: none; background: #fbfcfe; font: inherit; }
+    .achievement-admin-form input:focus, .achievement-admin-form textarea:focus { border-color: #87a4eb; box-shadow: 0 0 0 3px rgba(49,95,202,.08); }
+    .avatar-upload-label small { color: #9aa4b2; font-size: 10px; }
+    .remove-avatar-label { flex-direction: row !important; align-items: center; }
+    .remove-avatar-label[hidden] { display: none !important; }
+    .remove-avatar-label input { width: auto; }
+    .achievement-form-error { padding: 10px 12px; border-radius: 9px; background: #fff2f2; color: #ae4242; font-size: 12px; }
+    .achievement-form-error[hidden] { display: none; }
+    .achievement-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+    @media (max-width: 760px) { .achievement-admin-heading { align-items: flex-start; flex-direction: column; } .admin-profile-row { grid-template-columns: 1fr; } .achievement-form-grid { grid-template-columns: 1fr; } }
+  </style>
+</BaseLayout>

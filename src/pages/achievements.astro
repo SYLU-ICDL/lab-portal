@@ -1,0 +1,371 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="历届研究成果 | SYLU-ICDL" protectedPage={true}>
+  <main class="achievements-page">
+    <div class="achievements-shell">
+      <aside class="year-sidebar" aria-label="届别导航">
+        <div class="year-sidebar-title">届别</div>
+        <nav id="year-nav" class="year-nav"></nav>
+      </aside>
+
+      <section class="achievements-main">
+        <header class="achievements-heading">
+          <div class="achievements-kicker">研究归档</div>
+          <h1>历届研究成果</h1>
+          <p>按届别浏览实验室成员的研究方向、成果资料与联系方式。</p>
+        </header>
+
+        <div id="achievements-loading" class="achievements-state">
+          <div class="achievements-spinner"></div>
+          <span>正在加载历届成果…</span>
+        </div>
+
+        <div id="achievements-error" class="achievements-state error" hidden>
+          <strong>暂时无法加载历届成果</strong>
+          <span id="achievements-error-message">请稍后重试。</span>
+        </div>
+
+        <div id="achievements-empty" class="achievements-state" hidden>
+          <strong>暂无成果档案</strong>
+          <span>管理员添加档案后会显示在这里。</span>
+        </div>
+
+        <div id="achievements-content" class="achievements-content" hidden></div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="achievement-detail-dialog" class="achievement-dialog">
+    <div class="achievement-detail">
+      <button id="achievement-detail-close" class="achievement-close" type="button" aria-label="关闭">×</button>
+      <div id="achievement-detail-avatar" class="detail-avatar"></div>
+      <div class="detail-copy">
+        <div id="achievement-detail-year" class="detail-year"></div>
+        <h2 id="achievement-detail-name"></h2>
+        <p id="achievement-detail-direction" class="detail-direction"></p>
+        <div id="achievement-detail-keywords" class="detail-keywords"></div>
+      </div>
+
+      <div class="detail-grid">
+        <section id="achievement-contact-section" class="detail-section" hidden>
+          <h3>联系方式</h3>
+          <div id="achievement-contact-list" class="detail-contact-list"></div>
+        </section>
+        <section id="achievement-links-section" class="detail-section" hidden>
+          <h3>成果与资料</h3>
+          <div id="achievement-links-list" class="detail-links-list"></div>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    import { clearSession, getSessionToken } from "../lib/auth";
+
+    const AUTH_WORKER = "https://sylu-icdl-auth.hugozhao6.workers.dev";
+    type LinkItem = { label: string; url: string };
+    type Profile = {
+      id: string;
+      year: number;
+      name: string;
+      direction: string;
+      keywords: string[];
+      avatarPath?: string;
+      email?: string;
+      phone?: string;
+      links: LinkItem[];
+    };
+    type Cohort = { year: number; profiles: Profile[] };
+
+    const loading = document.querySelector<HTMLElement>("#achievements-loading");
+    const errorBox = document.querySelector<HTMLElement>("#achievements-error");
+    const errorMessage = document.querySelector<HTMLElement>("#achievements-error-message");
+    const emptyBox = document.querySelector<HTMLElement>("#achievements-empty");
+    const content = document.querySelector<HTMLElement>("#achievements-content");
+    const yearNav = document.querySelector<HTMLElement>("#year-nav");
+    const dialog = document.querySelector<HTMLDialogElement>("#achievement-detail-dialog");
+    const closeButton = document.querySelector<HTMLButtonElement>("#achievement-detail-close");
+    const detailAvatar = document.querySelector<HTMLElement>("#achievement-detail-avatar");
+    const detailYear = document.querySelector<HTMLElement>("#achievement-detail-year");
+    const detailName = document.querySelector<HTMLElement>("#achievement-detail-name");
+    const detailDirection = document.querySelector<HTMLElement>("#achievement-detail-direction");
+    const detailKeywords = document.querySelector<HTMLElement>("#achievement-detail-keywords");
+    const contactSection = document.querySelector<HTMLElement>("#achievement-contact-section");
+    const contactList = document.querySelector<HTMLElement>("#achievement-contact-list");
+    const linksSection = document.querySelector<HTMLElement>("#achievement-links-section");
+    const linksList = document.querySelector<HTMLElement>("#achievement-links-list");
+
+    const avatarCache = new Map<string, string>();
+    const objectUrls = new Set<string>();
+
+    function initials(name: string) {
+      const cleaned = name.trim();
+      if (!cleaned) return "研";
+      return cleaned.slice(0, 2);
+    }
+
+    function avatarHue(name: string) {
+      let hash = 0;
+      for (const char of name) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+      return Math.abs(hash) % 360;
+    }
+
+    function buildFallbackAvatar(name: string, className = "profile-avatar-fallback") {
+      const el = document.createElement("span");
+      el.className = className;
+      el.textContent = initials(name);
+      el.style.setProperty("--avatar-hue", String(avatarHue(name)));
+      return el;
+    }
+
+    async function avatarObjectUrl(path: string) {
+      if (avatarCache.has(path)) return avatarCache.get(path) || null;
+      const session = getSessionToken();
+      if (!session) return null;
+      const url = new URL(`${AUTH_WORKER}/api/achievements/avatar`);
+      url.searchParams.set("path", path);
+      const response = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${session}` },
+        cache: "no-store",
+      });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      avatarCache.set(path, objectUrl);
+      objectUrls.add(objectUrl);
+      return objectUrl;
+    }
+
+    async function hydrateAvatar(container: HTMLElement, profile: Profile, className = "profile-avatar-image") {
+      container.replaceChildren(buildFallbackAvatar(profile.name, className.replace("image", "fallback")));
+      if (!profile.avatarPath) return;
+      const url = await avatarObjectUrl(profile.avatarPath);
+      if (!url || !container.isConnected) return;
+      const img = document.createElement("img");
+      img.className = className;
+      img.src = url;
+      img.alt = `${profile.name} 头像`;
+      container.replaceChildren(img);
+    }
+
+    function setVisible(target: HTMLElement | null) {
+      for (const el of [loading, errorBox, emptyBox, content]) {
+        if (el) el.hidden = el !== target;
+      }
+    }
+
+    function openDetail(profile: Profile) {
+      if (detailAvatar) void hydrateAvatar(detailAvatar, profile, "detail-avatar-image");
+      if (detailYear) detailYear.textContent = `${profile.year} 届`;
+      if (detailName) detailName.textContent = profile.name;
+      if (detailDirection) detailDirection.textContent = profile.direction || "研究方向待补充";
+      if (detailKeywords) {
+        detailKeywords.replaceChildren(...profile.keywords.map((keyword) => {
+          const span = document.createElement("span");
+          span.textContent = keyword;
+          return span;
+        }));
+      }
+
+      if (contactList && contactSection) {
+        const nodes: HTMLElement[] = [];
+        if (profile.email) {
+          const row = document.createElement("div");
+          row.innerHTML = `<span>邮箱</span><a href="mailto:${profile.email}">${profile.email}</a>`;
+          nodes.push(row);
+        }
+        if (profile.phone) {
+          const row = document.createElement("div");
+          row.innerHTML = `<span>电话</span><a href="tel:${profile.phone}">${profile.phone}</a>`;
+          nodes.push(row);
+        }
+        contactList.replaceChildren(...nodes);
+        contactSection.hidden = nodes.length === 0;
+      }
+
+      if (linksList && linksSection) {
+        const nodes = profile.links.map((item) => {
+          const a = document.createElement("a");
+          a.href = item.url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          const label = document.createElement("strong");
+          label.textContent = item.label;
+          const arrow = document.createElement("span");
+          arrow.textContent = "↗";
+          a.append(label, arrow);
+          return a;
+        });
+        linksList.replaceChildren(...nodes);
+        linksSection.hidden = nodes.length === 0;
+      }
+      dialog?.showModal();
+    }
+
+    function render(cohorts: Cohort[]) {
+      if (!content || !yearNav) return;
+      content.replaceChildren();
+      yearNav.replaceChildren();
+
+      for (const cohort of cohorts) {
+        const section = document.createElement("section");
+        section.id = `year-${cohort.year}`;
+        section.className = "cohort-section";
+
+        const heading = document.createElement("div");
+        heading.className = "cohort-heading";
+        const year = document.createElement("h2");
+        year.textContent = `${cohort.year} 届`;
+        const count = document.createElement("span");
+        count.textContent = `${cohort.profiles.length} 人`;
+        heading.append(year, count);
+
+        const grid = document.createElement("div");
+        grid.className = "profile-grid";
+
+        cohort.profiles.forEach((profile) => {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "profile-card";
+          card.addEventListener("click", () => openDetail(profile));
+
+          const avatar = document.createElement("div");
+          avatar.className = "profile-avatar";
+          void hydrateAvatar(avatar, profile);
+
+          const body = document.createElement("div");
+          body.className = "profile-card-body";
+          const name = document.createElement("h3");
+          name.textContent = profile.name;
+          const direction = document.createElement("p");
+          direction.textContent = profile.direction || "研究方向待补充";
+          const tags = document.createElement("div");
+          tags.className = "profile-keywords";
+          profile.keywords.slice(0, 6).forEach((keyword) => {
+            const span = document.createElement("span");
+            span.textContent = keyword;
+            tags.append(span);
+          });
+          body.append(name, direction, tags);
+          card.append(avatar, body);
+          grid.append(card);
+        });
+
+        section.append(heading, grid);
+        content.append(section);
+
+        const nav = document.createElement("a");
+        nav.href = `#year-${cohort.year}`;
+        nav.textContent = String(cohort.year);
+        nav.dataset.year = String(cohort.year);
+        yearNav.append(nav);
+      }
+
+      const sections = Array.from(content.querySelectorAll<HTMLElement>(".cohort-section"));
+      if (sections.length > 0) {
+        const observer = new IntersectionObserver((entries) => {
+          const visible = entries.filter((item) => item.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (!visible) return;
+          const activeYear = visible.target.id.replace("year-", "");
+          yearNav.querySelectorAll("a").forEach((link) => link.classList.toggle("is-active", (link as HTMLElement).dataset.year === activeYear));
+        }, { rootMargin: "-25% 0px -60% 0px", threshold: [0, .2, .5] });
+        sections.forEach((section) => observer.observe(section));
+      }
+    }
+
+    async function load() {
+      const session = getSessionToken();
+      if (!session) return;
+      setVisible(loading);
+      try {
+        const response = await fetch(`${AUTH_WORKER}/api/achievements`, {
+          headers: { Authorization: `Bearer ${session}` },
+          cache: "no-store",
+        });
+        if (response.status === 401) {
+          clearSession();
+          window.location.reload();
+          return;
+        }
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "历届成果暂时无法加载。");
+        const cohorts = Array.isArray(data.cohorts) ? data.cohorts : [];
+        if (cohorts.length === 0) {
+          setVisible(emptyBox);
+          return;
+        }
+        render(cohorts);
+        setVisible(content);
+      } catch (error) {
+        if (errorMessage) errorMessage.textContent = error instanceof Error ? error.message : "请稍后重试。";
+        setVisible(errorBox);
+      }
+    }
+
+    closeButton?.addEventListener("click", () => dialog?.close());
+    dialog?.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    window.addEventListener("pagehide", () => objectUrls.forEach((url) => URL.revokeObjectURL(url)));
+    load();
+  </script>
+
+  <style is:global>
+    .achievements-page { min-height: calc(100vh - 68px); padding: 46px 0 90px; background: #f6f8fb; }
+    .achievements-shell { width: min(1480px, calc(100% - 56px)); margin: 0 auto; display: grid; grid-template-columns: 112px minmax(0,1fr); gap: 34px; }
+    .year-sidebar { position: sticky; top: 92px; height: fit-content; padding-top: 9px; }
+    .year-sidebar-title { margin-bottom: 12px; color: #a0a9b8; font-size: 10px; font-weight: 900; letter-spacing: .12em; }
+    .year-nav { display: flex; flex-direction: column; gap: 6px; }
+    .year-nav a { display: flex; height: 36px; align-items: center; padding: 0 11px; border-left: 2px solid #dce2eb; color: #8490a2; font-size: 12px; font-weight: 800; }
+    .year-nav a:hover, .year-nav a.is-active { border-left-color: #315fca; color: #315fca; background: linear-gradient(90deg, rgba(49,95,202,.08), transparent); }
+    .achievements-main { min-width: 0; }
+    .achievements-heading { margin-bottom: 34px; }
+    .achievements-kicker { color: #315fca; font-size: 11px; font-weight: 900; }
+    .achievements-heading h1 { margin: 7px 0 10px; color: #172033; font-size: clamp(34px,4vw,48px); letter-spacing: -.04em; }
+    .achievements-heading p { margin: 0; color: #7b8799; font-size: 14px; }
+    .cohort-section { scroll-margin-top: 92px; margin-bottom: 46px; }
+    .cohort-heading { display: flex; align-items: baseline; gap: 12px; margin-bottom: 15px; padding-bottom: 11px; border-bottom: 1px solid #dfe5ed; }
+    .cohort-heading h2 { margin: 0; color: #1f2b3e; font-size: 25px; }
+    .cohort-heading span { color: #98a3b2; font-size: 11px; }
+    .profile-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+    .profile-card { display: grid; grid-template-columns: 74px minmax(0,1fr); min-height: 142px; align-items: center; gap: 17px; padding: 20px; border: 1px solid #e0e6ee; border-radius: 17px; background: #fff; text-align: left; cursor: pointer; box-shadow: 0 7px 25px rgba(31,48,79,.035); transition: .18s ease; }
+    .profile-card:hover { transform: translateY(-2px); border-color: #cbd7ee; box-shadow: 0 14px 34px rgba(31,48,79,.08); }
+    .profile-avatar, .detail-avatar { display: grid; overflow: hidden; place-items: center; border-radius: 50%; background: #edf2fb; }
+    .profile-avatar { width: 68px; height: 68px; }
+    .profile-avatar-image, .profile-avatar-fallback, .detail-avatar-image, .detail-avatar-fallback { width: 100%; height: 100%; object-fit: cover; }
+    .profile-avatar-fallback, .detail-avatar-fallback { display: grid; place-items: center; background: hsl(var(--avatar-hue) 55% 93%); color: hsl(var(--avatar-hue) 45% 36%); font-weight: 900; }
+    .profile-avatar-fallback { font-size: 19px; }
+    .profile-card-body h3 { margin: 0 0 7px; color: #172033; font-size: 17px; }
+    .profile-card-body p { display: -webkit-box; min-height: 38px; margin: 0 0 11px; overflow: hidden; color: #66758a; font-size: 12px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .profile-keywords, .detail-keywords { display: flex; flex-wrap: wrap; gap: 5px; }
+    .profile-keywords span, .detail-keywords span { padding: 4px 7px; border-radius: 999px; background: #f0f4fa; color: #68778d; font-size: 9px; font-weight: 750; }
+    .achievements-state { display: flex; min-height: 280px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: #8792a4; }
+    .achievements-state[hidden], .achievements-content[hidden] { display: none; }
+    .achievements-spinner { width: 28px; height: 28px; border: 3px solid #e2e8f0; border-top-color: #315fca; border-radius: 50%; animation: ach-spin .8s linear infinite; }
+    @keyframes ach-spin { to { transform: rotate(360deg); } }
+    .achievement-dialog { position: fixed; inset: 0; margin: auto; width: min(720px, calc(100vw - 34px)); max-height: calc(100vh - 40px); padding: 0; border: 1px solid #dfe5ee; border-radius: 20px; background: #fff; box-shadow: 0 28px 90px rgba(20,32,55,.24); }
+    .achievement-dialog::backdrop { background: rgba(22,32,50,.44); backdrop-filter: blur(4px); }
+    .achievement-detail { position: relative; display: grid; grid-template-columns: 96px minmax(0,1fr); gap: 23px; padding: 30px; }
+    .achievement-close { position: absolute; top: 15px; right: 15px; width: 34px; height: 34px; border: 0; border-radius: 10px; background: #f2f5f9; color: #66758a; cursor: pointer; font-size: 20px; }
+    .detail-avatar { width: 92px; height: 92px; }
+    .detail-avatar-fallback { font-size: 25px; }
+    .detail-year { color: #315fca; font-size: 11px; font-weight: 900; }
+    .detail-copy h2 { margin: 4px 0 7px; color: #172033; font-size: 28px; }
+    .detail-direction { margin: 0 0 13px; color: #66758a; line-height: 1.65; }
+    .detail-grid { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; }
+    .detail-section { padding: 18px; border: 1px solid #e4e9f0; border-radius: 13px; background: #fafbfd; }
+    .detail-section[hidden] { display: none; }
+    .detail-section h3 { margin: 0 0 12px; color: #45536a; font-size: 12px; }
+    .detail-contact-list { display: flex; flex-direction: column; gap: 9px; }
+    .detail-contact-list div { display: grid; grid-template-columns: 52px minmax(0,1fr); gap: 8px; font-size: 12px; }
+    .detail-contact-list span { color: #9aa4b2; }
+    .detail-contact-list a { overflow: hidden; color: #315fca; text-overflow: ellipsis; white-space: nowrap; }
+    .detail-links-list { display: flex; flex-direction: column; gap: 7px; }
+    .detail-links-list a { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 10px; padding: 0 11px; border: 1px solid #e1e6ed; border-radius: 9px; background: #fff; color: #45536a; font-size: 11px; }
+    .detail-links-list a:hover { border-color: #bdcae8; color: #315fca; }
+    @media (max-width: 1080px) { .profile-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+    @media (max-width: 760px) { .achievements-shell { width: calc(100% - 28px); grid-template-columns: 1fr; gap: 14px; } .year-sidebar { position: sticky; top: 62px; z-index: 5; margin: 0 -2px; padding: 8px 0; background: rgba(246,248,251,.94); backdrop-filter: blur(10px); } .year-sidebar-title { display: none; } .year-nav { overflow-x: auto; flex-direction: row; } .year-nav a { flex: 0 0 auto; border-left: 0; border-bottom: 2px solid #dce2eb; } .year-nav a:hover, .year-nav a.is-active { border-left-color: transparent; border-bottom-color: #315fca; } .profile-grid { grid-template-columns: 1fr; } .achievement-detail { grid-template-columns: 72px minmax(0,1fr); padding: 24px; } .detail-avatar { width: 68px; height: 68px; } .detail-grid { grid-template-columns: 1fr; } }
+  </style>
+</BaseLayout>
